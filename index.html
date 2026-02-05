@@ -46,6 +46,14 @@
     }
     .controls button { margin: 0; flex: 1 1 auto; min-width: 100px; max-width: 160px; }
     
+    /* Top bar wrapper for desktop */
+    .top-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    
     .target-reps-container {
       display: flex;
       align-items: center;
@@ -53,8 +61,6 @@
       flex-wrap: wrap;
       justify-content: center;
       width: 100%;
-      margin-top: 8px;
-      margin-bottom: 12px;
     }
     
     .target-reps-container input {
@@ -70,7 +76,7 @@
       background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
       padding: 12px;
       border-radius: 10px;
-      min-height: 220px;
+      min-height: 180px;
       display: flex;
       flex-direction: column;
     }
@@ -172,7 +178,8 @@
       justify-content: center;
       align-items: center;
       text-align: center;
-      min-height: 220px;
+      min-height: 180px;
+      order: 2;
     }
     
     .hero-rep-card h3 {
@@ -202,6 +209,7 @@
       box-shadow: 0 6px 20px rgba(0,0,0,0.08);
       border: 2px solid #667eea;
       grid-column: 1 / -1;
+      order: 3;
     }
     
     .hero-chart-container h3 {
@@ -216,34 +224,28 @@
       height: 280px !important;
     }
     
+    .exercise-setup {
+      order: 1;
+    }
+    
     /* Desktop styles */
     @media (min-width: 768px) {
       body { padding: 15px; }
       
       h1 { text-align: left; }
       
-      .controls { justify-content: flex-start; }
+      .controls { justify-content: flex-start; margin-bottom: 0; }
       .controls button { flex: 0 0 auto; }
       
-      .exercise-grid {
-        grid-template-columns: repeat(4, 1fr);
+      .top-bar {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
       }
       
-      .hero-section {
-        grid-template-columns: repeat(2, 1fr);
-        align-items: stretch;
-      }
-      
-      .hero-rep-card {
-        padding: 20px 15px;
-      }
-      
-      .hero-chart-container {
-        padding: 18px;
-      }
-      
-      .hero-chart-container canvas {
-        height: 350px !important;
+      .target-reps-container {
+        width: auto;
+        justify-content: flex-end;
       }
       
       .data-grid {
@@ -257,18 +259,71 @@
       .value { font-size: 16px; }
     }
     
-    /* Large desktop */
+    /* Large desktop - 70/30 layout */
     @media (min-width: 1024px) {
-      .exercise-grid {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
-        align-items: flex-end;
+      .hero-section {
+        display: grid;
+        grid-template-columns: 70% 30%;
+        grid-template-rows: auto auto;
+        gap: 12px;
+        align-items: stretch;
       }
       
-      .exercise-grid > div {
-        flex: 1 1 auto;
-        min-width: 120px;
+      .hero-chart-container {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        padding: 18px;
+      }
+      
+      .hero-chart-container canvas {
+        height: 380px !important;
+        width: 100% !important;
+      }
+      
+      .exercise-setup {
+        grid-column: 2;
+        grid-row: 1;
+        min-height: auto;
+        padding: 10px;
+      }
+      
+      .exercise-setup-title {
+        font-size: 13px;
+        margin-bottom: 8px;
+      }
+      
+      .exercise-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+      }
+      
+      .exercise-grid label {
+        font-size: 10px;
+        margin-bottom: 2px;
+      }
+      
+      .exercise-grid select,
+      .exercise-grid input {
+        padding: 6px;
+        font-size: 10px;
+        min-height: 30px;
+      }
+      
+      .exercise-info {
+        font-size: 9px;
+        margin-top: 6px;
+      }
+      
+      .hero-rep-card {
+        grid-column: 2;
+        grid-row: 2;
+        min-height: auto;
+        padding: 15px 12px;
+      }
+      
+      .hero-rep-card .rep-value {
+        font-size: 42px;
       }
     }
   </style>
@@ -277,20 +332,27 @@
   <div class="container">
     <h1>🏋️ AppLift IMU Monitor</h1>
     
-    <div class="controls">
-      <button onclick="connectToBLE()">📶 Connect</button>
-      <button onclick="resetRepCount()">🔄 Reset</button>
-      <button onclick="toggleRecording()">▶️ Start Recording</button>
-    </div>
-    
-    <div class="target-reps-container">
-      <label for="target-reps" style="font-weight: bold;">Target Reps:</label>
-      <input type="number" id="target-reps" min="0" max="100" placeholder="∞">
-      <span style="color: #666; font-size: 12px;">(empty = no limit)</span>
+    <div class="top-bar">
+      <div class="controls">
+        <button onclick="connectToBLE()">📶 Connect</button>
+        <button onclick="resetRepCount()">🔄 Reset</button>
+        <button onclick="toggleRecording()">▶️ Start Recording</button>
+      </div>
+      
+      <div class="target-reps-container">
+        <label for="target-reps" style="font-weight: bold;">Target Reps:</label>
+        <input type="number" id="target-reps" min="0" max="100" placeholder="∞">
+        <span style="color: #666; font-size: 12px;">(empty = no limit)</span>
+      </div>
     </div>
     
     <!-- Hero Section: Exercise Setup + Rep Count -->
     <div class="hero-section">
+      <div class="hero-chart-container">
+        <h3>📊 Real-time Acceleration Data</h3>
+        <canvas id="accelChart"></canvas>
+      </div>
+      
       <!-- Exercise & Equipment Selection -->
       <div class="exercise-setup">
         <div class="exercise-setup-title">🏋️ Exercise Setup</div>
@@ -345,11 +407,6 @@
         <p class="rep-value" id="rep-count">0</p>
         <p class="rep-target" id="rep-target-display">Current Set</p>
         <div class="status idle" id="rep-status">Idle</div>
-      </div>
-      
-      <div class="hero-chart-container">
-        <h3>📊 Real-time Acceleration Data</h3>
-        <canvas id="accelChart"></canvas>
       </div>
     </div>
     
