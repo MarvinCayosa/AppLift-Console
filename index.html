@@ -54,6 +54,7 @@
       justify-content: center;
       width: 100%;
       margin-top: 8px;
+      margin-bottom: 12px;
     }
     
     .target-reps-container input {
@@ -151,8 +152,8 @@
     
     /* Hero section - Mobile First */
     .hero-section {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
       gap: 10px;
       margin-bottom: 15px;
     }
@@ -196,6 +197,7 @@
       border-radius: 12px;
       box-shadow: 0 6px 20px rgba(0,0,0,0.08);
       border: 2px solid #667eea;
+      grid-column: 1 / -1;
     }
     
     .hero-chart-container h3 {
@@ -224,18 +226,15 @@
       }
       
       .hero-section {
-        flex-direction: row;
+        grid-template-columns: repeat(2, 1fr);
         align-items: stretch;
       }
       
       .hero-rep-card {
-        min-width: 140px;
-        max-width: 180px;
         padding: 20px 15px;
       }
       
       .hero-chart-container {
-        flex: 1;
         padding: 18px;
       }
       
@@ -286,67 +285,57 @@
       <span style="color: #666; font-size: 12px;">(empty = no limit)</span>
     </div>
     
-    <!-- Exercise & Equipment Selection -->
-    <div class="exercise-setup">
-      <div class="exercise-setup-title">🏋️ Exercise Setup</div>
-      <div class="exercise-grid">
-        <div>
-          <label>Participant #</label>
-          <input type="number" id="participant-number" min="1" max="999" value="1">
-        </div>
-        <div>
-          <label>Equipment</label>
-          <select id="equipment-select">
-            <option value="0">Dumbbell</option>
-            <option value="1">Barbell</option>
-            <option value="2">Weight Stack</option>
-          </select>
-        </div>
-        <div>
-          <label>Exercise</label>
-          <select id="exercise-select">
-            <optgroup label="Dumbbell">
-              <option value="0" data-equipment="0">Concentration Curls</option>
-              <option value="1" data-equipment="0">Single Arm Overhead Extension</option>
-            </optgroup>
-            <optgroup label="Barbell">
-              <option value="2" data-equipment="1">Bench Press</option>
-              <option value="3" data-equipment="1">Front Squats</option>
-            </optgroup>
-            <optgroup label="Weight Stack">
-              <option value="4" data-equipment="2">Lateral Pulldown</option>
-              <option value="5" data-equipment="2">Seated Leg Extension</option>
-            </optgroup>
-          </select>
-        </div>
-        <div>
-          <label>Quality Label</label>
-          <select id="quality-select">
-            <option value="0">Clean</option>
-            <option value="1">Uncontrolled Movement</option>
-            <option value="2">Abrupt Initiation</option>
-          </select>
-        </div>
-      </div>
-      <div class="exercise-info" id="exercise-info">
-        <span id="equipment-display">Dumbbell (0)</span> | 
-        <span id="exercise-display">Concentration Curls (0)</span> | 
-        <span id="quality-display">Clean (0)</span>
-      </div>
-    </div>
-    
-    <!-- ROM Calibration Controls -->
-    <div class="rom-calibration">
-      <button onclick="startCalibrationModal()">🎯 ROM Calibration</button>
-      <div class="rom-values">
-        <span>Extended: <strong id="cal-extended-display">--</strong>°</span>
-        <span>Contracted: <strong id="cal-contracted-display">--</strong>°</span>
-        <span style="color: #ffc107;">ROM: <strong id="cal-rom-display">--</strong>°</span>
-      </div>
-    </div>
-    
-    <!-- Hero Section: Rep Count + Chart -->
+    <!-- Hero Section: Exercise Setup + Rep Count -->
     <div class="hero-section">
+      <!-- Exercise & Equipment Selection -->
+      <div class="exercise-setup">
+        <div class="exercise-setup-title">🏋️ Exercise Setup</div>
+        <div class="exercise-grid">
+          <div>
+            <label>Participant #</label>
+            <input type="number" id="participant-number" min="1" max="999" value="1">
+          </div>
+          <div>
+            <label>Equipment</label>
+            <select id="equipment-select">
+              <option value="0">Dumbbell</option>
+              <option value="1">Barbell</option>
+              <option value="2">Weight Stack</option>
+            </select>
+          </div>
+          <div>
+            <label>Exercise</label>
+            <select id="exercise-select">
+              <optgroup label="Dumbbell">
+                <option value="0" data-equipment="0">Concentration Curls</option>
+                <option value="1" data-equipment="0">Single Arm Overhead Extension</option>
+              </optgroup>
+              <optgroup label="Barbell">
+                <option value="2" data-equipment="1">Bench Press</option>
+                <option value="3" data-equipment="1">Front Squats</option>
+              </optgroup>
+              <optgroup label="Weight Stack">
+                <option value="4" data-equipment="2">Lateral Pulldown</option>
+                <option value="5" data-equipment="2">Seated Leg Extension</option>
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label>Quality Label</label>
+            <select id="quality-select">
+              <option value="0">Clean</option>
+              <option value="1">Uncontrolled Movement</option>
+              <option value="2">Abrupt Initiation</option>
+            </select>
+          </div>
+        </div>
+        <div class="exercise-info" id="exercise-info">
+          <span id="equipment-display">Dumbbell (0)</span> | 
+          <span id="exercise-display">Concentration Curls (0)</span> | 
+          <span id="quality-display">Clean (0)</span>
+        </div>
+      </div>
+      
       <div class="hero-rep-card">
         <h3>🏋️ Rep Count</h3>
         <p class="rep-value" id="rep-count">0</p>
