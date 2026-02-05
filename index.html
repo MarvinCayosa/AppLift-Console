@@ -1,0 +1,2011 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AppLift IMU Monitor - Sliding Window Rep Counter</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { 
+      font-family: Arial, sans-serif; 
+      padding: 10px; 
+      background-color: #f5f5f5; 
+      margin: 0;
+      -webkit-text-size-adjust: 100%;
+    }
+    button { 
+      padding: 12px 16px; 
+      font-size: 14px; 
+      margin: 5px; 
+      background-color: #007bff; 
+      color: white; 
+      border: none; 
+      border-radius: 8px; 
+      cursor: pointer;
+      touch-action: manipulation;
+      min-height: 44px;
+    }
+    button:hover { background-color: #0056b3; }
+    button:active { transform: scale(0.98); }
+    .container { max-width: 1400px; margin: 0 auto; }
+    
+    h1 {
+      font-size: clamp(18px, 5vw, 28px);
+      margin: 10px 0 15px 0;
+      text-align: center;
+    }
+    
+    /* Controls - Mobile First */
+    .controls { 
+      margin-bottom: 15px; 
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+    }
+    .controls button { margin: 0; flex: 1 1 auto; min-width: 120px; max-width: 200px; }
+    
+    .target-reps-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
+      margin-top: 10px;
+    }
+    
+    .target-reps-container input {
+      width: 70px;
+      padding: 10px;
+      font-size: 16px;
+      border: 2px solid #007bff;
+      border-radius: 8px;
+    }
+    
+    /* Exercise Setup Section */
+    .exercise-setup {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      padding: 15px;
+      border-radius: 12px;
+      margin-bottom: 15px;
+    }
+    
+    .exercise-setup-title {
+      color: white;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 12px;
+      font-size: 16px;
+    }
+    
+    .exercise-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    
+    .exercise-grid label {
+      color: white;
+      font-weight: bold;
+      font-size: 12px;
+      margin-bottom: 4px;
+      display: block;
+    }
+    
+    .exercise-grid select,
+    .exercise-grid input {
+      width: 100%;
+      padding: 10px;
+      font-size: 14px;
+      border-radius: 8px;
+      border: none;
+      min-height: 44px;
+    }
+    
+    .exercise-info {
+      color: white;
+      font-size: 11px;
+      text-align: center;
+      margin-top: 10px;
+      opacity: 0.9;
+    }
+    
+    /* ROM Calibration Section */
+    .rom-calibration {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 15px;
+      border-radius: 12px;
+      margin-bottom: 15px;
+      text-align: center;
+    }
+    
+    .rom-calibration button {
+      background: #28a745;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    
+    .rom-values {
+      color: white;
+      font-size: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 15px;
+    }
+    
+    .rom-values span { white-space: nowrap; }
+    
+    /* Data Grid */
+    .data-grid { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
+      gap: 10px; 
+      margin-bottom: 15px; 
+    }
+    .data-card { 
+      background: white; 
+      border: 1px solid #ddd; 
+      padding: 12px; 
+      border-radius: 10px; 
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    }
+    .data-card h3 { 
+      margin: 0 0 8px 0; 
+      color: #333; 
+      font-size: 13px; 
+    }
+    .data-card p { margin: 4px 0; font-size: 12px; }
+    .value { font-size: 16px; font-weight: bold; color: #007bff; }
+    
+    .status { 
+      padding: 6px 12px; 
+      border-radius: 6px; 
+      font-size: 12px; 
+      font-weight: bold; 
+      display: inline-block; 
+    }
+    .status.detecting { background-color: #28a745; color: white; }
+    .status.idle { background-color: #6c757d; color: white; }
+    
+    /* Hero section - Mobile First */
+    .hero-section {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    
+    .hero-rep-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 25px 20px;
+      border-radius: 15px;
+      box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+    
+    .hero-rep-card h3 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+      opacity: 0.9;
+    }
+    
+    .hero-rep-card .rep-value {
+      font-size: clamp(60px, 15vw, 80px);
+      font-weight: bold;
+      line-height: 1;
+      margin-bottom: 8px;
+      text-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+    
+    .hero-rep-card .rep-target {
+      font-size: 14px;
+      opacity: 0.8;
+      margin-bottom: 12px;
+    }
+    
+    .hero-chart-container {
+      background: white;
+      padding: 15px;
+      border-radius: 15px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+      border: 3px solid #667eea;
+    }
+    
+    .hero-chart-container h3 {
+      margin: 0 0 10px 0;
+      color: #333;
+      font-size: 16px;
+      text-align: center;
+    }
+    
+    .hero-chart-container canvas {
+      width: 100% !important;
+      height: 200px !important;
+    }
+    
+    /* Desktop styles */
+    @media (min-width: 768px) {
+      body { padding: 20px; }
+      
+      h1 { text-align: left; }
+      
+      .controls { justify-content: flex-start; }
+      .controls button { flex: 0 0 auto; }
+      
+      .exercise-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      
+      .hero-section {
+        flex-direction: row;
+        align-items: stretch;
+      }
+      
+      .hero-rep-card {
+        min-width: 200px;
+        padding: 30px;
+      }
+      
+      .hero-chart-container {
+        flex: 1;
+        padding: 25px;
+      }
+      
+      .hero-chart-container canvas {
+        height: 280px !important;
+      }
+      
+      .data-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 15px;
+      }
+      
+      .data-card { padding: 15px; }
+      .data-card h3 { font-size: 16px; }
+      .data-card p { font-size: 14px; }
+      .value { font-size: 20px; }
+    }
+    
+    /* Large desktop */
+    @media (min-width: 1024px) {
+      .exercise-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        align-items: flex-end;
+      }
+      
+      .exercise-grid > div {
+        flex: 1 1 auto;
+        min-width: 120px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🏋️ AppLift IMU Monitor</h1>
+    
+    <div class="controls">
+      <button onclick="connectToBLE()">📶 Connect</button>
+      <button onclick="resetRepCount()">🔄 Reset</button>
+      <button onclick="toggleRecording()">▶️ Start Recording</button>
+    </div>
+    
+    <div class="target-reps-container">
+      <label for="target-reps" style="font-weight: bold;">Target Reps:</label>
+      <input type="number" id="target-reps" min="0" max="100" placeholder="∞">
+      <span style="color: #666; font-size: 12px;">(empty = no limit)</span>
+    </div>
+    
+    <!-- Exercise & Equipment Selection -->
+    <div class="exercise-setup">
+      <div class="exercise-setup-title">🏋️ Exercise Setup</div>
+      <div class="exercise-grid">
+        <div>
+          <label>Participant #</label>
+          <input type="number" id="participant-number" min="1" max="999" value="1">
+        </div>
+        <div>
+          <label>Equipment</label>
+          <select id="equipment-select">
+            <option value="0">Dumbbell</option>
+            <option value="1">Barbell</option>
+            <option value="2">Weight Stack</option>
+          </select>
+        </div>
+        <div>
+          <label>Exercise</label>
+          <select id="exercise-select">
+            <optgroup label="Dumbbell">
+              <option value="0" data-equipment="0">Concentration Curls</option>
+              <option value="1" data-equipment="0">Single Arm Overhead Extension</option>
+            </optgroup>
+            <optgroup label="Barbell">
+              <option value="2" data-equipment="1">Bench Press</option>
+              <option value="3" data-equipment="1">Front Squats</option>
+            </optgroup>
+            <optgroup label="Weight Stack">
+              <option value="4" data-equipment="2">Lateral Pulldown</option>
+              <option value="5" data-equipment="2">Seated Leg Extension</option>
+            </optgroup>
+          </select>
+        </div>
+        <div>
+          <label>Quality Label</label>
+          <select id="quality-select">
+            <option value="0">Clean</option>
+            <option value="1">Uncontrolled Movement</option>
+            <option value="2">Abrupt Initiation</option>
+          </select>
+        </div>
+      </div>
+      <div class="exercise-info" id="exercise-info">
+        <span id="equipment-display">Dumbbell (0)</span> | 
+        <span id="exercise-display">Concentration Curls (0)</span> | 
+        <span id="quality-display">Clean (0)</span>
+      </div>
+    </div>
+    
+    <!-- ROM Calibration Controls -->
+    <div class="rom-calibration">
+      <button onclick="startCalibrationModal()">🎯 ROM Calibration</button>
+      <div class="rom-values">
+        <span>Extended: <strong id="cal-extended-display">--</strong>°</span>
+        <span>Contracted: <strong id="cal-contracted-display">--</strong>°</span>
+        <span style="color: #ffc107;">ROM: <strong id="cal-rom-display">--</strong>°</span>
+      </div>
+    </div>
+    
+    <!-- Hero Section: Rep Count + Chart -->
+    <div class="hero-section">
+      <div class="hero-rep-card">
+        <h3>🏋️ Rep Count</h3>
+        <p class="rep-value" id="rep-count">0</p>
+        <p class="rep-target" id="rep-target-display">Current Set</p>
+        <div class="status idle" id="rep-status">Idle</div>
+      </div>
+      
+      <div class="hero-chart-container">
+        <h3>📊 Real-time Acceleration Data</h3>
+        <canvas id="accelChart"></canvas>
+      </div>
+    </div>
+    
+    <div class="data-grid">
+      <div class="data-card">
+        <h3>Accelerometer (Raw)</h3>
+        <p>X: <span class="value" id="accel-x">--</span> m/s²</p>
+        <p>Y: <span class="value" id="accel-y">--</span> m/s²</p>
+        <p>Z: <span class="value" id="accel-z">--</span> m/s²</p>
+        <p>Mag: <span class="value" id="accel-mag">--</span> m/s²</p>
+      </div>
+      
+      <div class="data-card">
+        <h3>Accelerometer (Filtered)</h3>
+        <p>X: <span class="value" id="accel-x-filtered">--</span> m/s²</p>
+        <p>Y: <span class="value" id="accel-y-filtered">--</span> m/s²</p>
+        <p>Z: <span class="value" id="accel-z-filtered">--</span> m/s²</p>
+        <p>Mag: <span class="value" id="accel-mag-filtered">--</span> m/s²</p>
+      </div>
+      
+      <div class="data-card">
+        <h3>Gyroscope</h3>
+        <p>X: <span class="value" id="gyro-x">--</span> rad/s</p>
+        <p>Y: <span class="value" id="gyro-y">--</span> rad/s</p>
+        <p>Z: <span class="value" id="gyro-z">--</span> rad/s</p>
+      </div>
+    </div>
+    
+    <div class="data-grid">
+      <div class="data-card">
+        <h3>Orientation</h3>
+        <p>Roll: <span class="value" id="roll">--</span>°</p>
+        <p>Pitch: <span class="value" id="pitch">--</span>°</p>
+        <p>Yaw: <span class="value" id="yaw">--</span>°</p>
+      </div>
+      
+      <div class="data-card">
+        <h3>Rep Detection (Sliding Window)</h3>
+        <p>State: <span class="value" id="rep-state">--</span></p>
+        <p>Buffer: <span class="value" id="buffer-state">--</span></p>
+        <p>RepHeight: <span class="value" id="last-peak">--</span></p>
+      </div>
+      
+      <div class="data-card">
+        <h3>Dynamic Thresholds</h3>
+        <p>High: <span class="value" id="threshold-high-display">--</span></p>
+        <p>Low: <span class="value" id="threshold-low-display">--</span></p>
+        <p>Range: <span class="value" id="threshold-range">--</span></p>
+      </div>
+      
+      <div class="data-card">
+        <h3>Algorithm Settings</h3>
+        <p style="font-size: 12px;">Window: <span class="value" style="font-size: 14px;">1.5s</span> (80% overlap)</p>
+        <p style="font-size: 12px;">Min Duration: <span class="value" style="font-size: 14px;">0.5s</span></p>
+        <p style="font-size: 12px;">Prominence: <span class="value" style="font-size: 14px;">0.15</span> m/s²</p>
+        <p style="font-size: 11px; color: #666; margin-top: 5px;">⚡ FAST RESPONSE - Auto-reset window</p>
+      </div>
+      
+      <div class="data-card">
+        <h3>Statistics</h3>
+        <p>Avg Time: <span class="value" id="avg-rep-time">--</span>s</p>
+        <p>Last Rep: <span class="value" id="last-rep-time">--</span>s</p>
+        <p>Total Time: <span class="value" id="total-time">--</span>s</p>
+      </div>
+      
+      <div class="data-card">
+        <h3>Connection</h3>
+        <p>Status: <span class="value" id="connection-status">Disconnected</span></p>
+        <p>Samples: <span class="value" id="sample-count">0</span></p>
+        <p>Data Rate: <span class="value" id="data-rate">0</span> Hz</p>
+      </div>
+      
+      <div class="data-card">
+        <h3>📱 NFC Equipment</h3>
+        <p>Current: <span class="value" id="nfc-equipment">None</span></p>
+        <p>Last Scan: <span class="value" id="nfc-timestamp">--</span></p>
+        <p style="font-size: 12px; color: #666; margin-top: 5px;">Equipment detected via NFC scan</p>
+      </div>
+  </div>
+
+  <script>
+    const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+    const CHARACTERISTIC_UUID_IMU = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+    let device = null;
+    let characteristic = null;
+    let chart = null;
+    let isRecording = false;
+    let recordingStartTime = 0;
+    let countdownActive = false;
+    
+    // ROM Calibration state
+    let calibration = {
+      extended: null,      // Roll angle at extended position
+      contracted: null,    // Roll angle at contracted position
+      rom: null,           // Calculated ROM in degrees
+      exercise: 'concentration_curls',
+      timestamp: null
+    };
+    let currentRoll = 0;   // Current roll value for calibration
+    let calibrationHoldTimer = null;
+    let calibrationHoldProgress = 0;
+    let calibrationHoldType = null; // 'extended' or 'contracted'
+    let calibrationRollSamples = []; // Store samples during 3s hold
+    
+    // Exercise and Equipment mapping
+    const EQUIPMENT_MAPPING = {
+      0: 'Dumbbell',
+      1: 'Barbell',
+      2: 'Weight Stack'
+    };
+    
+    const EXERCISE_MAPPING = {
+      0: 'Concentration Curls',
+      1: 'Single Arm Overhead Extension',
+      2: 'Bench Press',
+      3: 'Front Squats',
+      4: 'Lateral Pulldown',
+      5: 'Seated Leg Extension'
+    };
+    
+    // Movement Quality Labels mapping
+    const QUALITY_LABELS = {
+      // Dumbbell exercises
+      0: ['Clean', 'Uncontrolled Movement', 'Abrupt Initiation'], // Concentration Curls
+      1: ['Clean', 'Uncontrolled Movement', 'Abrupt Initiation'], // Single-Arm Overhead Extension
+      // Barbell exercises  
+      2: ['Clean', 'Uncontrolled Movement', 'Inclination Asymmetry'], // Flat Bench Barbell Press
+      3: ['Clean', 'Uncontrolled Movement', 'Forward Bar Drift'], // Front Squat
+      // Weight Stack exercises
+      4: ['Clean', 'Pulling Too Fast', 'Releasing Too Fast'], // Lateral Pulldown
+      5: ['Clean', 'Pulling Too Fast', 'Releasing Too Fast']  // Seated Leg Extension
+    };
+    
+    // Current selected equipment and exercise
+    let selectedEquipment = 0;
+    let selectedExercise = 0;
+    let selectedQualityLabel = 0; // Default to first quality label (Clean)
+    
+    // Target reps for auto-stop (0 or empty = no limit)
+    function getTargetReps() {
+      const input = document.getElementById('target-reps');
+      const value = parseInt(input.value);
+      return isNaN(value) || value <= 0 ? null : value;
+    }
+    
+    // Raw data logging for CSV export
+    let rawDataLog = [];
+    
+    // Data buffers
+    const MAX_CHART_POINTS = 100; // Show last 5 seconds at 20Hz
+    const timeData = [];
+    const accelMagData = [];
+    const accelMagFilteredData = [];
+    
+    // Kalman Filter for each axis
+    class KalmanFilter {
+      constructor(processNoise = 0.01, measurementNoise = 0.25, estimationError = 1, initialValue = 0) {
+        this.processNoise = processNoise;          // Q - Process noise covariance
+        this.measurementNoise = measurementNoise;  // R - Measurement noise covariance
+        this.estimationError = estimationError;    // P - Estimation error covariance
+        this.value = initialValue;                 // X - Estimated value
+      }
+      
+      update(measurement) {
+        // Prediction update
+        this.estimationError += this.processNoise;
+        
+        // Measurement update
+        const kalmanGain = this.estimationError / (this.estimationError + this.measurementNoise);
+        this.value += kalmanGain * (measurement - this.value);
+        this.estimationError = (1 - kalmanGain) * this.estimationError;
+        
+        return this.value;
+      }
+    }
+    
+    // Create Kalman filters for each axis
+    const kalmanX = new KalmanFilter(0.01, 0.5, 1, 0);
+    const kalmanY = new KalmanFilter(0.01, 0.5, 1, 0);
+    const kalmanZ = new KalmanFilter(0.01, 0.5, 1, 9.81);
+    
+    // Improved Rep Counter with Sliding Window for Slow Controlled Reps
+    class RepCounter {
+      constructor() {
+        this.repCount = 0;
+        
+        // Sliding window parameters (optimized for fast response)
+        this.windowDuration = 1.5; // 1.5 second window for faster detection
+        this.windowOverlap = 0.8; // 80% overlap - process almost every sample
+        this.samplingRate = 20; // 20Hz
+        this.windowSamples = Math.floor(this.windowDuration * this.samplingRate);
+        this.stepSize = Math.floor(this.windowSamples * (1 - this.windowOverlap));
+        
+        // Data buffers
+        this.accelBuffer = [];
+        this.timeBuffer = [];
+        this.allSamples = [];
+        
+        // Rep segmentation
+        this.reps = []; // Array of rep segments with timestamps
+        this.currentRep = null;
+        this.lastRepEndTime = 0;
+        
+        // Peak detection for slow movements (VERY sensitive)
+        this.minPeakProminence = 0.15; // For m/s² units
+        this.minPeakDistance = 15; // Minimum 0.75s between peaks (20Hz * 0.75) - one rep cycle
+        this.minRepDuration = 0.0; // No minimum duration - allow any speed
+        this.maxRepDuration = 12.0; // Maximum 12 seconds per rep
+        this.adaptiveThreshold = true; // Use adaptive thresholding
+        
+        // Dynamic threshold (in m/s² - gravity ≈ 9.81 m/s²)
+        this.thresholdHigh = 10.5;
+        this.thresholdLow = 9.5;
+        this.repHeight = 0;
+        
+        // State tracking
+        this.state = 'IDLE';
+        this.lastPeakIndex = -1;
+        this.lastValleyIndex = -1;
+        this.lastDetectedValleyIndex = -1; // Track the last valley used in a rep
+        this.lastDetectedPeakIndex = -1;   // Track the last peak used in a rep
+        this.previousRepEndValley = null;  // Track where the previous rep ended (next rep starts here)
+        this.previousRepEndIndex = null;   // Track the sample index where previous rep ended
+        this.inRepPhase = false;
+        
+        // Statistics
+        this.repTimes = [];
+        this.repStartTime = 0;
+      }
+      
+      addSample(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, roll, pitch, yaw, accelMag, timestamp) {
+        // Store complete sample data - rep number will be assigned retroactively when rep is detected
+        const sample = {
+          timestamp: timestamp,
+          accelX, accelY, accelZ,
+          gyroX, gyroY, gyroZ,
+          roll, pitch, yaw,
+          accelMag: accelMag,
+          sampleIndex: this.allSamples.length, // Track index for retroactive assignment
+          repNumber: 0 // Will be assigned when rep boundaries are detected
+        };
+        
+        this.allSamples.push(sample);
+        this.accelBuffer.push(accelMag);
+        this.timeBuffer.push(timestamp);
+        
+        // Process window immediately when we have enough samples
+        if (this.accelBuffer.length >= this.windowSamples) {
+          this.processWindow();
+        }
+      }
+      
+      processWindow() {
+        // Get current window
+        const window = this.accelBuffer.slice(-this.windowSamples);
+        const windowTimes = this.timeBuffer.slice(-this.windowSamples);
+        
+        // Calculate statistics EVERY time to prevent threshold drift
+        const max = Math.max(...window);
+        const min = Math.min(...window);
+        const mean = window.reduce((a, b) => a + b, 0) / window.length;
+        const range = max - min;
+        
+        // Calculate standard deviation
+        const variance = window.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / window.length;
+        const stdDev = Math.sqrt(variance);
+        
+        // Fixed threshold approach - use minimum threshold to prevent issues with many reps
+        // Use 20% of range OR 0.2 m/s² minimum (more conservative to avoid false positives)
+        const rangeThreshold = Math.max(range * 0.20, 0.20);
+        const stdThreshold = Math.max(stdDev * 0.6, 0.20);
+        const finalThreshold = Math.min(rangeThreshold, stdThreshold);
+        
+        // Update thresholds EVERY window
+        this.thresholdHigh = mean + finalThreshold;
+        this.thresholdLow = mean - finalThreshold;
+        this.repHeight = range;
+        
+        // Detect peaks and valleys using prominence-based method
+        this.detectRepsInWindow(window, windowTimes);
+      }
+      
+      detectRepsInWindow(window, windowTimes) {
+        const n = window.length;
+        const currentGlobalIndex = this.accelBuffer.length - 1;
+        
+        // Find all peaks (local maxima) - 3-sample window for stable detection
+        const peaks = [];
+        for (let i = 3; i < n - 3; i++) {
+          let isPeak = true;
+          const centerValue = window[i];
+          
+          // Check if it's higher than neighbors (3-sample window = stable detection)
+          for (let j = i - 3; j <= i + 3; j++) {
+            if (j !== i && window[j] >= centerValue) {
+              isPeak = false;
+              break;
+            }
+          }
+          
+          if (isPeak && centerValue > this.thresholdHigh) {
+            const globalIndex = currentGlobalIndex - (n - 1 - i);
+            
+            // Check minimum peak distance to prevent multiple detections in one rep
+            if (this.lastPeakIndex === -1 || globalIndex - this.lastPeakIndex >= this.minPeakDistance) {
+              peaks.push({
+                index: globalIndex,
+                value: centerValue,
+                time: windowTimes[i]
+              });
+            }
+          }
+        }
+        
+        // Find all valleys (local minima) - 3-sample window for stable detection
+        const valleys = [];
+        for (let i = 3; i < n - 3; i++) {
+          let isValley = true;
+          const centerValue = window[i];
+          
+          // Check if it's lower than neighbors (3-sample window = stable detection)
+          for (let j = i - 3; j <= i + 3; j++) {
+            if (j !== i && window[j] <= centerValue) {
+              isValley = false;
+              break;
+            }
+          }
+          
+          if (isValley && centerValue < this.thresholdLow) {
+            const globalIndex = currentGlobalIndex - (n - 1 - i);
+            
+            // Check minimum valley distance to prevent multiple detections in one rep
+            if (this.lastValleyIndex === -1 || globalIndex - this.lastValleyIndex >= this.minPeakDistance) {
+              valleys.push({
+                index: globalIndex,
+                value: centerValue,
+                time: windowTimes[i]
+              });
+            } 
+          }
+        }
+        
+        // Detect rep completion: valley -> peak pattern (1 rep = one cycle)
+        // Simple: just need one valley and one peak to count as a rep
+        if (valleys.length >= 1 && peaks.length >= 1) {
+          const lastValley = valleys[valleys.length - 1];
+          const lastPeak = peaks[peaks.length - 1];
+          
+          // Determine which came first to decide the direction
+          let isValidRep = false;
+          let startPoint, endPoint, prominence, repDuration;
+          
+          // Case 1: Valley -> Peak (lifting up from bottom)
+          if (lastValley.index < lastPeak.index) {
+            // Skip if we've already counted this peak
+            if (lastPeak.index <= this.lastDetectedPeakIndex) {
+              return;
+            }
+            
+            startPoint = lastValley;
+            endPoint = lastPeak;
+            prominence = Math.abs(lastPeak.value - lastValley.value);
+            repDuration = (lastPeak.time - lastValley.time) / 1000;
+            isValidRep = true;
+          }
+          // Case 2: Peak -> Valley (lowering down from top)
+          else if (lastPeak.index < lastValley.index) {
+            // Skip if we've already counted this valley
+            if (lastValley.index <= this.lastDetectedValleyIndex) {
+              return;
+            }
+            
+            startPoint = lastPeak;
+            endPoint = lastValley;
+            prominence = Math.abs(lastPeak.value - lastValley.value);
+            repDuration = (lastValley.time - lastPeak.time) / 1000;
+            isValidRep = true;
+          }
+          
+          if (isValidRep) {
+            // Log detection attempt for debugging
+            console.log(`🔍 Rep candidate: duration=${repDuration.toFixed(2)}s, prominence=${prominence.toFixed(3)} m/s²`);
+            
+            // Very relaxed validation - catch almost all movements
+            if (repDuration >= this.minRepDuration && 
+                repDuration <= this.maxRepDuration && 
+                prominence >= this.minPeakProminence) {
+              
+              // Count the rep
+              this.completeRep(startPoint, lastPeak, endPoint);
+              
+              // Mark these indices as used
+              this.lastDetectedValleyIndex = lastValley.index;
+              this.lastDetectedPeakIndex = lastPeak.index;
+              this.lastValleyIndex = lastValley.index;
+              this.lastPeakIndex = lastPeak.index;
+              this.lastRepEndTime = endPoint.time;
+            } else {
+              console.log(`❌ Failed validation: duration=${repDuration >= this.minRepDuration && repDuration <= this.maxRepDuration}, prominence=${prominence >= this.minPeakProminence} (need ${this.minPeakProminence})`);
+            }
+          }
+        }
+        
+        // Track rep phase for real-time labeling
+        if (valleys.length > 0 && peaks.length === 0) {
+          this.inRepPhase = true;
+          this.state = 'STARTING'; // Bottom position (valley)
+        } else if (peaks.length > 0) {
+          this.state = 'LIFTING'; // Moving up to peak or coming down
+        } else {
+          this.inRepPhase = false;
+          this.state = 'REST';
+        }
+      }
+      
+      completeRep(startValley, peak, endValley) {
+        this.repCount++;
+        const duration = (endValley.time - startValley.time) / 1000;
+        
+        console.log(`✅ REP #${this.repCount} | Duration: ${duration.toFixed(2)}s | Range: ${Math.abs(peak.value - startValley.value).toFixed(2)} m/s²`);
+        
+        // Store rep metadata with precise boundary information
+        const repData = {
+          repNumber: this.repCount,
+          startTime: startValley.time,
+          endTime: endValley.time,
+          startIndex: startValley.index,
+          endIndex: endValley.index,
+          duration: duration,
+          peakValue: peak.value,
+          valleyValue: startValley.value,
+          range: Math.abs(peak.value - startValley.value)
+        };
+        this.reps.push(repData);
+        this.repTimes.push(duration);
+        
+        // *** CRITICAL FIX: Continuous segmentation with NO GAPS ***
+        // Rep boundaries: each rep INCLUDES the valley sample at the end
+        // The next rep starts at the sample AFTER the valley
+        
+        let repStartIndex = 0;
+        
+        if (this.repCount === 1) {
+          // First rep: starts from sample 0 (beginning of recording)
+          repStartIndex = 0;
+        } else if (this.previousRepEndIndex !== null) {
+          // Subsequent reps: start at the sample AFTER previous rep's valley
+          // This ensures continuous coverage: Rep N ends at valley index X, Rep N+1 starts at X+1
+          repStartIndex = this.previousRepEndIndex + 1;
+        }
+        
+        // Find the end index: INCLUDE the end valley sample in this rep
+        // The next rep will start at the sample AFTER this valley
+        // This ensures continuous coverage with NO GAPS
+        let repEndIndex = this.allSamples.length - 1;
+        for (let i = 0; i < this.allSamples.length; i++) {
+          if (this.allSamples[i].timestamp >= endValley.time) {
+            // Include the valley sample in this rep (not i-1, but i)
+            repEndIndex = i;
+            break;
+          }
+        }
+        
+        // Ensure we don't overlap with previous rep
+        if (repStartIndex > repEndIndex) {
+          repEndIndex = repStartIndex;
+        }
+        
+        console.log(`📍 Rep ${this.repCount} boundaries: sample ${repStartIndex} to ${repEndIndex} (valley at ${endValley.time.toFixed(0)}ms)`);
+        
+        // Assign rep number to all samples in this range
+        for (let i = repStartIndex; i <= repEndIndex; i++) {
+          this.allSamples[i].repNumber = this.repCount;
+        }
+        
+        // Update rep data with actual sample indices
+        repData.actualStartIndex = repStartIndex;
+        repData.actualEndIndex = repEndIndex;
+        
+        // *** Store this rep's end index for the next rep to continue from ***
+        this.previousRepEndIndex = repEndIndex;
+        this.previousRepEndValley = endValley;
+        
+        // Visual feedback
+        document.getElementById('rep-status').textContent = `Rep #${this.repCount}`;
+        document.getElementById('rep-status').className = 'status detecting';
+        
+        // Check if target reps reached - auto-stop recording
+        const targetReps = getTargetReps();
+        if (targetReps !== null && this.repCount >= targetReps) {
+          console.log(`🎯 Target of ${targetReps} reps reached! Auto-stopping recording...`);
+          document.getElementById('rep-status').textContent = `Target Reached! (${this.repCount}/${targetReps})`;
+          document.getElementById('rep-status').className = 'status detecting';
+          
+          // Auto-stop recording after a short delay to capture final data
+          setTimeout(() => {
+            if (isRecording) {
+              toggleRecording(); // Stop recording
+            }
+          }, 500);
+          return;
+        }
+        
+        setTimeout(() => {
+          document.getElementById('rep-status').textContent = 'Recording...';
+        }, 300);
+      }
+      
+      getAverageRepTime() {
+        if (this.repTimes.length === 0) return 0;
+        return this.repTimes.reduce((a, b) => a + b, 0) / this.repTimes.length;
+      }
+      
+      reset() {
+        this.repCount = 0;
+        this.accelBuffer = [];
+        this.timeBuffer = [];
+        this.allSamples = [];
+        this.reps = [];
+        this.currentRep = null;
+        this.lastRepEndTime = 0;
+        this.repTimes = [];
+        this.state = 'IDLE';
+        this.lastPeakIndex = -1;
+        this.lastValleyIndex = -1;
+        this.lastDetectedValleyIndex = -1;
+        this.lastDetectedPeakIndex = -1;
+        this.previousRepEndValley = null;  // Reset previous rep end valley
+        this.previousRepEndIndex = null;   // Reset previous rep end index
+        this.inRepPhase = false;
+        this.repStartTime = 0;
+      }
+    }
+    
+    const repCounter = new RepCounter();
+    
+    // Sample counting for data rate calculation
+    let sampleCount = 0;
+    let lastSampleTime = Date.now();
+    let dataRate = 0;
+    
+    // Initialize Chart
+    function initChart() {
+      const ctx = document.getElementById('accelChart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: timeData,
+          datasets: [
+            {
+              label: 'Raw Acceleration Magnitude',
+              data: accelMagData,
+              borderColor: 'rgba(255, 99, 132, 0.5)',
+              backgroundColor: 'rgba(255, 99, 132, 0.1)',
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.1
+            },
+            {
+              label: 'Filtered Acceleration (Kalman)',
+              data: accelMagFilteredData,
+              borderColor: 'rgba(54, 162, 235, 1)',
+              backgroundColor: 'rgba(54, 162, 235, 0.1)',
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.1
+            },
+            {
+              label: 'High Threshold (Peak)',
+              data: Array(MAX_CHART_POINTS).fill(repCounter.thresholdHigh),
+              borderColor: 'rgba(75, 192, 192, 0.5)',
+              borderWidth: 1,
+              borderDash: [5, 5],
+              pointRadius: 0,
+              fill: false
+            },
+            {
+              label: 'Low Threshold (Trough)',
+              data: Array(MAX_CHART_POINTS).fill(repCounter.thresholdLow),
+              borderColor: 'rgba(255, 159, 64, 0.5)',
+              borderWidth: 1,
+              borderDash: [5, 5],
+              pointRadius: 0,
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            x: {
+              display: true,
+              title: {
+                display: true,
+                text: 'Time (seconds)'
+              }
+            },
+            y: {
+              display: true,
+              title: {
+                display: true,
+                text: 'Acceleration (m/s²)'
+              },
+              // Auto-scale with padding to show all values
+              grace: '10%'
+            }
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top'
+            }
+          }
+        }
+      });
+    }
+    
+    // Update chart with new data
+    function updateChart() {
+      if (chart) {
+        // Update labels (time axis)
+        chart.data.labels = timeData;
+        
+        // Update data arrays
+        chart.data.datasets[0].data = accelMagData;
+        chart.data.datasets[1].data = accelMagFilteredData;
+        chart.data.datasets[2].data = Array(timeData.length).fill(repCounter.thresholdHigh);
+        chart.data.datasets[3].data = Array(timeData.length).fill(repCounter.thresholdLow);
+        
+        chart.update('none'); // 'none' mode for performance
+      }
+    }
+
+    async function connectToBLE() {
+      try {
+        console.log('Requesting Bluetooth Device...');
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'AppLift_IMU' }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        console.log('Connecting to GATT Server...');
+        const server = await device.gatt.connect();
+
+        console.log('Getting Service...');
+        const service = await server.getPrimaryService(SERVICE_UUID);
+
+        console.log('Getting Characteristic...');
+        characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID_IMU);
+
+        console.log('Starting Notifications...');
+        await characteristic.startNotifications();
+
+        characteristic.addEventListener('characteristicvaluechanged', handleIMUData);
+        
+        // Get NFC equipment characteristic
+        try {
+          const nfcCharacteristic = await service.getCharacteristic('ceb5483e-36e1-4688-b7f5-ea07361b26a8');
+          await nfcCharacteristic.startNotifications();
+          nfcCharacteristic.addEventListener('characteristicvaluechanged', handleNFCData);
+          console.log('NFC equipment characteristic subscribed!');
+        } catch (e) {
+          console.warn('NFC characteristic not available:', e);
+        }
+        
+        console.log('Connected! Receiving IMU data...');
+        document.getElementById('connection-status').textContent = 'Connected';
+        document.getElementById('connection-status').style.color = '#28a745';
+        alert('Connected to AppLift_IMU successfully! Press "Start Recording" to begin.');
+        
+        // Initialize chart if not already done
+        if (!chart) {
+          initChart();
+        }
+      } catch (error) {
+        console.error('Connection failed:', error);
+        document.getElementById('connection-status').textContent = 'Failed';
+        document.getElementById('connection-status').style.color = '#dc3545';
+        alert('Connection failed: ' + error.message);
+      }
+    }
+
+    function handleIMUData(event) {
+      const value = event.target.value;
+      
+      // Parse the 40-byte data array
+      const dataView = new DataView(value.buffer);
+      
+      const imuData = {
+        accelX: dataView.getFloat32(0, true),
+        accelY: dataView.getFloat32(4, true),
+        accelZ: dataView.getFloat32(8, true),
+        gyroX: dataView.getFloat32(12, true),
+        gyroY: dataView.getFloat32(16, true),
+        gyroZ: dataView.getFloat32(20, true),
+        roll: dataView.getFloat32(24, true),
+        pitch: dataView.getFloat32(28, true),
+        yaw: dataView.getFloat32(32, true),
+        timestamp: dataView.getUint32(36, true)
+      };
+      
+      // Calculate acceleration magnitude
+      const accelMag = Math.sqrt(
+        imuData.accelX * imuData.accelX +
+        imuData.accelY * imuData.accelY +
+        imuData.accelZ * imuData.accelZ
+      );
+      
+      // Apply Kalman filter to each axis
+      const filteredX = kalmanX.update(imuData.accelX);
+      const filteredY = kalmanY.update(imuData.accelY);
+      const filteredZ = kalmanZ.update(imuData.accelZ);
+      
+      // Calculate filtered magnitude
+      const filteredMag = Math.sqrt(
+        filteredX * filteredX +
+        filteredY * filteredY +
+        filteredZ * filteredZ
+      );
+      
+      // Only process if recording (after countdown)
+      if (isRecording && !countdownActive) {
+        // Set recording start time on first sample
+        if (recordingStartTime === 0) {
+          recordingStartTime = imuData.timestamp;
+          console.log(`📍 Recording started at timestamp: ${recordingStartTime}`);
+        }
+        
+        // Calculate relative timestamp (milliseconds from start)
+        const relativeTime = imuData.timestamp - recordingStartTime;
+        
+        // Log raw data for CSV export
+        rawDataLog.push({
+          timestamp: relativeTime,
+          accelX: imuData.accelX,
+          accelY: imuData.accelY,
+          accelZ: imuData.accelZ,
+          gyroX: imuData.gyroX,
+          gyroY: imuData.gyroY,
+          gyroZ: imuData.gyroZ,
+          roll: imuData.roll,
+          pitch: imuData.pitch,
+          yaw: imuData.yaw,
+          accelMag: accelMag,
+          filteredX: filteredX,
+          filteredY: filteredY,
+          filteredZ: filteredZ,
+          filteredMag: filteredMag
+        });
+        
+        // Update chart data with relative time in seconds.milliseconds format
+        const seconds = Math.floor(relativeTime / 1000);
+        const milliseconds = relativeTime % 1000;
+        const displayTime = `${seconds}.${milliseconds.toString().padStart(3, '0')}`;
+        timeData.push(displayTime);
+        accelMagData.push(accelMag);
+        accelMagFilteredData.push(filteredMag);
+        
+        // Keep buffer size manageable
+        if (timeData.length > MAX_CHART_POINTS) {
+          timeData.shift();
+          accelMagData.shift();
+          accelMagFilteredData.shift();
+        }
+        
+        // Update chart
+        updateChart();
+        
+        // Rep counting with all sensor data
+        repCounter.addSample(
+          imuData.accelX, imuData.accelY, imuData.accelZ,
+          imuData.gyroX, imuData.gyroY, imuData.gyroZ,
+          imuData.roll, imuData.pitch, imuData.yaw,
+          filteredMag, relativeTime
+        );
+        updateRepStats();
+      }
+      
+      // Always update display (even when not recording)
+      displayIMUData(imuData, accelMag, filteredX, filteredY, filteredZ, filteredMag);
+      
+      // Update sample count and data rate
+      sampleCount++;
+      const now = Date.now();
+      if (now - lastSampleTime >= 1000) {
+        dataRate = sampleCount;
+        sampleCount = 0;
+        lastSampleTime = now;
+        document.getElementById('data-rate').textContent = dataRate;
+      }
+      document.getElementById('sample-count').textContent = sampleCount + dataRate * Math.floor((now - lastSampleTime) / 1000);
+    }
+
+    function handleNFCData(event) {
+      const value = event.target.value;
+      const dataView = new DataView(value.buffer);
+      
+      // First byte is the length
+      const length = dataView.getUint8(0);
+      
+      // Extract equipment name (remaining bytes)
+      let equipmentName = '';
+      for (let i = 1; i <= length && i < value.byteLength; i++) {
+        equipmentName += String.fromCharCode(dataView.getUint8(i));
+      }
+      
+      console.log('📡 NFC Equipment detected via BLE:', equipmentName);
+      
+      // Update UI
+      document.getElementById('nfc-equipment').textContent = equipmentName;
+      const now = new Date();
+      document.getElementById('nfc-timestamp').textContent = now.toLocaleTimeString([], { hour12: true });
+      
+      // Display NFC equipment notification
+      showNFCNotification(equipmentName);
+    }
+
+    function showNFCNotification(equipmentName) {
+      // Create notification element
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        font-size: 18px;
+        font-weight: bold;
+        z-index: 10000;
+        animation: slideIn 0.3s ease-out;
+      `;
+      
+      notification.textContent = `📱 Equipment: ${equipmentName}`;
+      
+      // Add animation styles
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes slideIn {
+          from {
+            transform: translateX(400px);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        @keyframes slideOut {
+          from {
+            transform: translateX(0);
+            opacity: 1;
+          }
+          to {
+            transform: translateX(400px);
+            opacity: 0;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      
+      document.body.appendChild(notification);
+      
+      // Auto-remove after 3 seconds with fade out
+      setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-in forwards';
+        setTimeout(() => {
+          document.body.removeChild(notification);
+        }, 300);
+      }, 3000);
+    }
+
+    function displayIMUData(data, accelMag, filteredX, filteredY, filteredZ, filteredMag) {
+      // Update raw data
+      document.getElementById('accel-x').textContent = data.accelX.toFixed(2);
+      document.getElementById('accel-y').textContent = data.accelY.toFixed(2);
+      document.getElementById('accel-z').textContent = data.accelZ.toFixed(2);
+      document.getElementById('accel-mag').textContent = accelMag.toFixed(2);
+      
+      // Update filtered data
+      document.getElementById('accel-x-filtered').textContent = filteredX.toFixed(2);
+      document.getElementById('accel-y-filtered').textContent = filteredY.toFixed(2);
+      document.getElementById('accel-z-filtered').textContent = filteredZ.toFixed(2);
+      document.getElementById('accel-mag-filtered').textContent = filteredMag.toFixed(2);
+      
+      // Update gyroscope
+      document.getElementById('gyro-x').textContent = data.gyroX.toFixed(2);
+      document.getElementById('gyro-y').textContent = data.gyroY.toFixed(2);
+      document.getElementById('gyro-z').textContent = data.gyroZ.toFixed(2);
+      
+      // Update orientation
+      document.getElementById('roll').textContent = data.roll.toFixed(2);
+      document.getElementById('pitch').textContent = data.pitch.toFixed(2);
+      document.getElementById('yaw').textContent = data.yaw.toFixed(2);
+      
+      // Update current roll for calibration
+      currentRoll = data.roll;
+    }
+    
+    function updateRepStats() {
+      // Update rep count
+      document.getElementById('rep-count').textContent = repCounter.repCount;
+      
+      // Update target display
+      const targetReps = getTargetReps();
+      if (targetReps !== null) {
+        document.getElementById('rep-target-display').textContent = `Target: ${repCounter.repCount}/${targetReps}`;
+      } else {
+        document.getElementById('rep-target-display').textContent = 'Current Set';
+      }
+      
+      // Update rep detection state
+      document.getElementById('rep-state').textContent = repCounter.state;
+      document.getElementById('buffer-state').textContent = `${repCounter.accelBuffer.length}/${repCounter.windowSamples}`;
+      
+      // Update repHeight info
+      if (repCounter.repHeight > 0) {
+        document.getElementById('last-peak').textContent = repCounter.repHeight.toFixed(2) + ' m/s²';
+      }
+      
+      // Update dynamic threshold display
+      document.getElementById('threshold-high-display').textContent = repCounter.thresholdHigh.toFixed(2) + ' m/s²';
+      document.getElementById('threshold-low-display').textContent = repCounter.thresholdLow.toFixed(2) + ' m/s²';
+      const range = repCounter.thresholdHigh - repCounter.thresholdLow;
+      document.getElementById('threshold-range').textContent = range.toFixed(2) + ' m/s²';
+      
+      // Update timing stats
+      const avgTime = repCounter.getAverageRepTime();
+      if (avgTime > 0) {
+        document.getElementById('avg-rep-time').textContent = avgTime.toFixed(2);
+      }
+      if (repCounter.repTimes.length > 0) {
+        document.getElementById('last-rep-time').textContent = repCounter.repTimes[repCounter.repTimes.length - 1].toFixed(2);
+      }
+      
+      // Update total time (only when recording)
+      if (isRecording && !countdownActive && recordingStartTime > 0) {
+        const now = Date.now();
+        const totalTime = (now - recordingStartTime - (Date.now() - recordingStartTime)) / 1000;
+        if (rawDataLog.length > 0) {
+          const lastTimestamp = rawDataLog[rawDataLog.length - 1].timestamp;
+          document.getElementById('total-time').textContent = (lastTimestamp / 1000).toFixed(1);
+        }
+      }
+    }
+    
+    function resetRepCount() {
+      repCounter.reset();
+      rawDataLog = [];
+      recordingStartTime = 0;
+      document.getElementById('rep-count').textContent = '0';
+      document.getElementById('rep-target-display').textContent = 'Current Set';
+      document.getElementById('rep-state').textContent = '--';
+      document.getElementById('buffer-state').textContent = '--';
+      document.getElementById('last-peak').textContent = '--';
+      document.getElementById('threshold-high-display').textContent = '--';
+      document.getElementById('threshold-low-display').textContent = '--';
+      document.getElementById('threshold-range').textContent = '--';
+      document.getElementById('avg-rep-time').textContent = '--';
+      document.getElementById('last-rep-time').textContent = '--';
+      document.getElementById('total-time').textContent = '--';
+      document.getElementById('rep-status').textContent = 'Reset';
+      document.getElementById('rep-status').className = 'status idle';
+      console.log('🔄 Rep counter reset');
+    }
+    
+    async function showCountdown() {
+      countdownActive = true;
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.85);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        font-size: clamp(80px, 25vw, 150px);
+        color: white;
+        font-weight: bold;
+        text-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      `;
+      document.body.appendChild(overlay);
+      
+      for (let i = 3; i > 0; i--) {
+        overlay.textContent = i;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      overlay.textContent = 'GO!';
+      await new Promise(resolve => setTimeout(resolve, 500));
+      document.body.removeChild(overlay);
+      countdownActive = false;
+    }
+    
+    async function exportToCSV() {
+      if (rawDataLog.length === 0) {
+        alert('No data to export!');
+        return;
+      }
+      
+      // *** FINALIZE REP ASSIGNMENTS BEFORE EXPORT ***
+      // This ensures all samples have a rep number, including:
+      // 1. Initial samples before first rep detection (assign to rep 1)
+      // 2. Trailing samples after last rep detection (assign to last rep + 1 if enough data)
+      
+      const samples = repCounter.allSamples;
+      const totalReps = repCounter.repCount;
+      
+      console.log(`📊 Finalizing ${samples.length} samples with ${totalReps} detected reps...`);
+      
+      // First pass: assign rep 1 to any early samples that are still rep 0
+      // These are samples before the first valley-peak pattern was detected
+      let lastAssignedRep = 0;
+      for (let i = 0; i < samples.length; i++) {
+        if (samples[i].repNumber === 0) {
+          // Check if there's a later sample with a rep number
+          let foundLaterRep = false;
+          for (let j = i + 1; j < samples.length; j++) {
+            if (samples[j].repNumber > 0) {
+              // Assign this early sample to rep 1 (before any detection)
+              samples[i].repNumber = 1;
+              foundLaterRep = true;
+              break;
+            }
+          }
+          // If no later rep found, assign to the last known rep or 1
+          if (!foundLaterRep) {
+            samples[i].repNumber = Math.max(1, lastAssignedRep);
+          }
+        } else {
+          lastAssignedRep = samples[i].repNumber;
+        }
+      }
+      
+      // Second pass: handle trailing samples (after the last complete rep)
+      // Find the last rep's end valley timestamp
+      if (repCounter.reps.length > 0) {
+        const lastRep = repCounter.reps[repCounter.reps.length - 1];
+        const lastRepEndTime = lastRep.endTime;
+        
+        // Any samples after the last rep's end valley belong to the "next" rep (incomplete)
+        // We'll assign them to lastRep + 1 for analysis purposes
+        for (let i = samples.length - 1; i >= 0; i--) {
+          if (samples[i].timestamp > lastRepEndTime && samples[i].repNumber === 0) {
+            samples[i].repNumber = totalReps + 1;
+          } else if (samples[i].repNumber > 0) {
+            break; // Stop when we hit assigned samples
+          }
+        }
+      }
+      
+      // Log final assignment summary
+      const repCounts = {};
+      samples.forEach(s => {
+        repCounts[s.repNumber] = (repCounts[s.repNumber] || 0) + 1;
+      });
+      console.log('📊 Rep distribution:', repCounts);
+      
+      // Create enriched data with proper rep labeling
+      const participantNum = parseInt(document.getElementById('participant-number').value) || 1;
+      
+      const enrichedData = rawDataLog.map((logEntry, index) => {
+        // Get rep number from allSamples (which tracks rep assignment in real-time)
+        const sample = repCounter.allSamples[index];
+        const repNumber = sample ? sample.repNumber : 1; // Default to rep 1 if not found
+        
+        // Format timestamp as seconds.milliseconds (e.g., 00.000, 01.523, 12.045)
+        const seconds = Math.floor(logEntry.timestamp / 1000);
+        const milliseconds = logEntry.timestamp % 1000;
+        const formattedTime = `${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+        
+        return {
+          participant: participantNum,
+          rep: repNumber,
+          equipment_code: selectedEquipment,
+          exercise_code: selectedExercise,
+          quality_code: selectedQualityLabel,
+          timestamp: formattedTime,
+          timestamp_ms: logEntry.timestamp,
+          accelX: logEntry.accelX.toFixed(4),
+          accelY: logEntry.accelY.toFixed(4),
+          accelZ: logEntry.accelZ.toFixed(4),
+          accelMag: logEntry.accelMag.toFixed(4),
+          gyroX: logEntry.gyroX.toFixed(4),
+          gyroY: logEntry.gyroY.toFixed(4),
+          gyroZ: logEntry.gyroZ.toFixed(4),
+          roll: logEntry.roll.toFixed(2),
+          pitch: logEntry.pitch.toFixed(2),
+          yaw: logEntry.yaw.toFixed(2),
+          filteredX: logEntry.filteredX.toFixed(4),
+          filteredY: logEntry.filteredY.toFixed(4),
+          filteredZ: logEntry.filteredZ.toFixed(4),
+          filteredMag: logEntry.filteredMag.toFixed(4)
+        };
+      });
+      
+      // Create CSV header
+      const headers = Object.keys(enrichedData[0]);
+      let csvContent = headers.join(',') + '\n';
+      
+      // Add data rows
+      enrichedData.forEach(row => {
+        csvContent += Object.values(row).join(',') + '\n';
+      });
+      
+      // Get participant number
+      const participantNumber = parseInt(document.getElementById('participant-number').value) || 1;
+      const participantStr = `P${participantNumber.toString().padStart(3, '0')}`; // P001, P002, etc.
+      
+      // Create organized filename
+      const equipmentName = EQUIPMENT_MAPPING[selectedEquipment].replace(/\s+/g, '_');
+      const exerciseName = EXERCISE_MAPPING[selectedExercise].replace(/\s+/g, '_');
+      const qualityName = QUALITY_LABELS[selectedExercise][selectedQualityLabel].replace(/\s+/g, '_');
+      
+      // Track workout number per participant+exercise+quality using localStorage
+      const storageKey = `workout_count_${participantNumber}_${selectedEquipment}_${selectedExercise}_${selectedQualityLabel}`;
+      let workoutNumber = parseInt(localStorage.getItem(storageKey) || '0') + 1;
+      localStorage.setItem(storageKey, workoutNumber.toString());
+      
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+      
+      // New filename format: P001_Dumbbell_Concentration_Curls_Clean_0_01.csv
+      const filename = `${participantStr}_${equipmentName}_${exerciseName}_${qualityName}_${selectedQualityLabel}_${workoutNumber.toString().padStart(2, '0')}.csv`;
+      
+      // Download CSV file
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      
+      console.log(`📊 Exported ${enrichedData.length} samples (${repCounter.repCount} reps) to CSV`);
+      
+      // Show success message
+      alert(`✅ ${participantStr} Workout #${workoutNumber} Downloaded!\n\n` +
+        `📄 File: ${filename}\n\n` +
+        `📊 Stats:\n` +
+        `• Participant: ${participantStr}\n` +
+        `• ${enrichedData.length} samples\n` +
+        `• ${repCounter.repCount} reps\n` +
+        `• Equipment: ${EQUIPMENT_MAPPING[selectedEquipment]}\n` +
+        `• Exercise: ${EXERCISE_MAPPING[selectedExercise]}\n` +
+        `• Quality: ${QUALITY_LABELS[selectedExercise][selectedQualityLabel]} (${selectedQualityLabel})`);
+    }
+    
+    function exportEquipmentMapping() {
+      // Create mapping reference file
+      const mapping = {
+        equipment_codes: EQUIPMENT_MAPPING,
+        exercise_codes: EXERCISE_MAPPING,
+        quality_labels: QUALITY_LABELS,
+        current_selection: {
+          equipment_code: selectedEquipment,
+          equipment_name: EQUIPMENT_MAPPING[selectedEquipment],
+          exercise_code: selectedExercise,
+          exercise_name: EXERCISE_MAPPING[selectedExercise],
+          quality_code: selectedQualityLabel,
+          quality_name: QUALITY_LABELS[selectedExercise][selectedQualityLabel]
+        },
+        export_timestamp: new Date().toISOString()
+      };
+      
+      const jsonStr = JSON.stringify(mapping, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'exercise_equipment_mapping.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      console.log('📋 Equipment/Exercise mapping exported to exercise_equipment_mapping.json');
+    }
+    
+    function showExportModal() {
+      return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.7);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 9999;
+          padding: 20px;
+        `;
+        
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+          background: white;
+          padding: 25px;
+          border-radius: 15px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+          text-align: center;
+          max-width: 350px;
+          width: 100%;
+        `;
+        
+        modal.innerHTML = `
+          <h2 style="margin-top: 0; color: #333; font-size: 22px;">✅ Recording Stopped</h2>
+          <p style="color: #666; margin: 15px 0; font-size: 16px;">
+            You recorded <strong>${repCounter.repCount} reps</strong><br>with <strong>${rawDataLog.length} samples</strong>.
+          </p>
+          <p style="color: #666; margin: 15px 0; font-size: 14px;">
+            Download the CSV file?
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
+            <button id="modal-download" style="
+              padding: 15px 24px;
+              font-size: 16px;
+              background-color: #28a745;
+              color: white;
+              border: none;
+              border-radius: 10px;
+              cursor: pointer;
+              font-weight: bold;
+              min-height: 50px;
+            ">📥 Download CSV</button>
+            <button id="modal-skip" style="
+              padding: 15px 24px;
+              font-size: 16px;
+              background-color: #6c757d;
+              color: white;
+              border: none;
+              border-radius: 10px;
+              cursor: pointer;
+              min-height: 50px;
+            ">Skip</button>
+          </div>
+        `;
+        
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        
+        document.getElementById('modal-download').addEventListener('click', () => {
+          document.body.removeChild(overlay);
+          resolve(true);
+        });
+        
+        document.getElementById('modal-skip').addEventListener('click', () => {
+          document.body.removeChild(overlay);
+          resolve(false);
+        });
+      });
+    }
+    
+    async function toggleRecording() {
+      if (!isRecording) {
+        // Starting recording - show countdown first
+        const button = document.querySelector('button[onclick="toggleRecording()"]');
+        button.disabled = true;
+        button.textContent = '⏳ Starting...';
+        
+        await showCountdown();
+        
+        // Now start actual recording
+        isRecording = true;
+        recordingStartTime = 0; // Will be set on first sample
+        rawDataLog = [];
+        repCounter.reset();
+        
+        button.disabled = false;
+        button.textContent = '⏹️ Stop Recording';
+        button.style.backgroundColor = '#dc3545';
+        document.getElementById('rep-status').textContent = 'Recording...';
+        document.getElementById('rep-status').className = 'status detecting';
+        console.log('🔴 Recording started after countdown');
+      } else {
+        // Stop recording
+        isRecording = false;
+        const button = document.querySelector('button[onclick="toggleRecording()"]');
+        button.textContent = '▶️ Start Recording';
+        button.style.backgroundColor = '#007bff';
+        document.getElementById('rep-status').textContent = 'Stopped';
+        document.getElementById('rep-status').className = 'status idle';
+        console.log('⏹️ Recording stopped');
+        
+        // Show modal to confirm CSV export
+        if (rawDataLog.length > 0) {
+          const shouldExport = await showExportModal();
+          if (shouldExport) {
+            exportToCSV();
+          } else {
+            console.log('📊 CSV export skipped by user');
+          }
+        }
+      }
+    }
+    
+    // Initialize chart on page load
+    window.onload = function() {
+      initChart();
+      
+      // Setup exercise/equipment selectors
+      const equipmentSelect = document.getElementById('equipment-select');
+      const exerciseSelect = document.getElementById('exercise-select');
+      const qualitySelect = document.getElementById('quality-select');
+      
+      equipmentSelect.addEventListener('change', function() {
+        selectedEquipment = parseInt(this.value);
+        updateExerciseOptions();
+        updateQualityOptions();
+        updateExerciseDisplay();
+      });
+      
+      exerciseSelect.addEventListener('change', function() {
+        selectedExercise = parseInt(this.value);
+        const selectedOption = this.options[this.selectedIndex];
+        selectedEquipment = parseInt(selectedOption.dataset.equipment);
+        equipmentSelect.value = selectedEquipment;
+        updateQualityOptions();
+        updateExerciseDisplay();
+      });
+      
+      qualitySelect.addEventListener('change', function() {
+        selectedQualityLabel = parseInt(this.value);
+        updateExerciseDisplay();
+      });
+      
+      updateQualityOptions();
+      updateExerciseDisplay();
+    };
+    
+    function updateExerciseOptions() {
+      const exerciseSelect = document.getElementById('exercise-select');
+      const options = exerciseSelect.querySelectorAll('option');
+      
+      // Filter and select first matching exercise for equipment
+      for (let option of options) {
+        if (parseInt(option.dataset.equipment) === selectedEquipment) {
+          option.selected = true;
+          selectedExercise = parseInt(option.value);
+          break;
+        }
+      }
+    }
+    
+    function updateQualityOptions() {
+      const qualitySelect = document.getElementById('quality-select');
+      const qualityLabels = QUALITY_LABELS[selectedExercise];
+      
+      // Clear existing options
+      qualitySelect.innerHTML = '';
+      
+      // Add new options for the selected exercise
+      qualityLabels.forEach((label, index) => {
+        const option = document.createElement('option');
+        option.value = index;
+        option.textContent = label;
+        qualitySelect.appendChild(option);
+      });
+      
+      // Reset selected quality to 0 (first option)
+      selectedQualityLabel = 0;
+      qualitySelect.value = 0;
+    }
+    
+    function updateExerciseDisplay() {
+      document.getElementById('equipment-display').textContent = 
+        `${EQUIPMENT_MAPPING[selectedEquipment]} (${selectedEquipment})`;
+      document.getElementById('exercise-display').textContent = 
+        `${EXERCISE_MAPPING[selectedExercise]} (${selectedExercise})`;
+      document.getElementById('quality-display').textContent = 
+        `${QUALITY_LABELS[selectedExercise][selectedQualityLabel]} (${selectedQualityLabel})`;
+    }
+    
+    // ============ ROM CALIBRATION FUNCTIONS (Modal-based 3-second hold) ============
+    
+    function startCalibrationModal() {
+      if (currentRoll === 0 && !device) {
+        alert('Please connect to the IMU device first!');
+        return;
+      }
+      
+      // Reset calibration state
+      calibration.extended = null;
+      calibration.contracted = null;
+      calibration.rom = null;
+      
+      // Create modal overlay
+      const overlay = document.createElement('div');
+      overlay.id = 'calibration-modal';
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.85);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        padding: 20px;
+      `;
+      
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 25px;
+        border-radius: 20px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        text-align: center;
+        max-width: 400px;
+        width: 100%;
+        color: white;
+      `;
+      
+      modal.innerHTML = `
+        <h2 style="margin: 0 0 15px 0; font-size: clamp(24px, 6vw, 32px);">📐 ROM Calibration</h2>
+        <p id="cal-instruction" style="font-size: clamp(16px, 4vw, 20px); margin: 20px 0; min-height: 50px;">
+          Step 1: Hold arm <strong>EXTENDED</strong><br>and get ready...
+        </p>
+        <div id="cal-countdown" style="font-size: clamp(60px, 15vw, 80px); font-weight: bold; margin: 20px 0; color: #ffc107;">
+          3
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <button id="cal-action-btn" style="
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            min-height: 50px;
+          ">Start Extended Hold</button>
+          <button id="cal-cancel-btn" style="
+            padding: 12px 25px;
+            font-size: 16px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            min-height: 44px;
+          ">Cancel</button>
+        </div>
+      `;
+      
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      
+      // Cancel button handler
+      document.getElementById('cal-cancel-btn').addEventListener('click', () => {
+        if (calibrationHoldTimer) clearInterval(calibrationHoldTimer);
+        document.body.removeChild(overlay);
+      });
+      
+      // Start calibration workflow - use a shared state object
+      const modalState = { currentStep: 'ready-extended' };
+      
+      const actionBtnHandler = () => {
+        if (modalState.currentStep === 'ready-extended') {
+          modalState.currentStep = 'holding-extended';
+          startHoldCountdown('extended', overlay, modalState);
+        } else if (modalState.currentStep === 'ready-contracted') {
+          modalState.currentStep = 'holding-contracted';
+          startHoldCountdown('contracted', overlay, modalState);
+        } else if (modalState.currentStep === 'complete') {
+          saveAndCloseCalibration(overlay);
+        }
+      };
+      
+      document.getElementById('cal-action-btn').addEventListener('click', actionBtnHandler);
+    }
+    
+    function startHoldCountdown(type, overlay, modalState) {
+      const instruction = document.getElementById('cal-instruction');
+      const countdown = document.getElementById('cal-countdown');
+      const actionBtn = document.getElementById('cal-action-btn');
+      const cancelBtn = document.getElementById('cal-cancel-btn');
+      
+      actionBtn.disabled = true;
+      cancelBtn.disabled = true;
+      
+      if (type === 'extended') {
+        instruction.innerHTML = '<strong>HOLD EXTENDED POSITION</strong><br>Keep your arm still...';
+      } else {
+        instruction.innerHTML = '<strong>HOLD CONTRACTED POSITION</strong><br>Keep your arm still...';
+      }
+      
+      calibrationHoldProgress = 0;
+      calibrationRollSamples = [];
+      
+      calibrationHoldTimer = setInterval(() => {
+        calibrationHoldProgress += 0.1;
+        calibrationRollSamples.push(currentRoll);
+        
+        const remaining = Math.ceil(3 - calibrationHoldProgress);
+        countdown.textContent = remaining;
+        
+        if (calibrationHoldProgress >= 3) {
+          clearInterval(calibrationHoldTimer);
+          completeCalibrationStep(type, overlay, modalState);
+        }
+      }, 100);
+    }
+    
+    function completeCalibrationStep(type, overlay, modalState) {
+      const avgRoll = calibrationRollSamples.reduce((a, b) => a + b, 0) / calibrationRollSamples.length;
+      
+      const instruction = document.getElementById('cal-instruction');
+      const countdown = document.getElementById('cal-countdown');
+      const actionBtn = document.getElementById('cal-action-btn');
+      const cancelBtn = document.getElementById('cal-cancel-btn');
+      
+      if (type === 'extended') {
+        calibration.extended = avgRoll;
+        document.getElementById('cal-extended-display').textContent = avgRoll.toFixed(1);
+        console.log(`📐 Extended: ${avgRoll.toFixed(2)}° (avg of ${calibrationRollSamples.length} samples)`);
+        
+        // Show success and move to contracted
+        countdown.textContent = '✓';
+        countdown.style.color = '#28a745';
+        instruction.innerHTML = '✅ Extended position recorded!<br><br>Now hold arm <strong>CONTRACTED</strong>';
+        actionBtn.textContent = 'Start Contracted Hold';
+        actionBtn.disabled = false;
+        cancelBtn.disabled = false;
+        
+        // Update step for next button click
+        modalState.currentStep = 'ready-contracted';
+        
+        // Reset countdown display after a brief pause
+        setTimeout(() => {
+          countdown.textContent = '3';
+          countdown.style.color = '#ffc107';
+        }, 1500);
+        
+      } else {
+        calibration.contracted = avgRoll;
+        document.getElementById('cal-contracted-display').textContent = avgRoll.toFixed(1);
+        calibration.rom = Math.abs(calibration.contracted - calibration.extended);
+        document.getElementById('cal-rom-display').textContent = calibration.rom.toFixed(1);
+        console.log(`📐 Contracted: ${avgRoll.toFixed(2)}° (avg of ${calibrationRollSamples.length} samples)`);
+        console.log(`📐 ROM: ${calibration.rom.toFixed(2)}°`);
+        
+        // Show completion
+        countdown.textContent = '✓';
+        countdown.style.color = '#28a745';
+        instruction.innerHTML = `✅ Calibration Complete!<br><br>
+          Extended: <strong>${calibration.extended.toFixed(1)}°</strong><br>
+          Contracted: <strong>${calibration.contracted.toFixed(1)}°</strong><br>
+          ROM: <strong style="color: #ffc107;">${calibration.rom.toFixed(1)}°</strong>`;
+        actionBtn.textContent = '💾 Save & Close';
+        actionBtn.disabled = false;
+        cancelBtn.disabled = false;
+        
+        // Update step for final save action
+        modalState.currentStep = 'complete';
+      }
+      
+      calibrationRollSamples = [];
+    }
+    
+    function saveAndCloseCalibration(overlay) {
+      saveCalibration();
+      document.body.removeChild(overlay);
+    }
+    
+    function saveCalibration() {
+      if (calibration.extended === null || calibration.contracted === null) {
+        alert('Please calibrate both Extended and Contracted positions first!');
+        return;
+      }
+      
+      // Prepare calibration data (compatible with rom_analyzer.py)
+      calibration.timestamp = new Date().toISOString();
+      
+      const calibrationData = {
+        exercise: EXERCISE_MAPPING[selectedExercise].toLowerCase().replace(/ /g, '_'),
+        exercise_code: selectedExercise,
+        equipment_code: selectedEquipment,
+        roll_extended: calibration.extended,
+        roll_contracted: calibration.contracted,
+        rom_degrees: calibration.rom,
+        calibration_source: 'live_imu_3s_hold',
+        timestamp: calibration.timestamp,
+        // Additional metadata for analysis
+        metadata: {
+          device: 'AppLift_IMU',
+          method: '3_second_hold',
+          equipment_name: EQUIPMENT_MAPPING[selectedEquipment],
+          exercise_name: EXERCISE_MAPPING[selectedExercise],
+          notes: 'Calibrated via test (1).html with 3-second hold averaging'
+        }
+      };
+      
+      // Create and download JSON file
+      const jsonStr = JSON.stringify(calibrationData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'rom_calibration.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      console.log('💾 Calibration saved to rom_calibration.json');
+      console.log('Calibration data:', calibrationData);
+      
+      console.log('💾 Calibration file downloaded successfully');
+    }
+  </script>
+</body>
+</html>
