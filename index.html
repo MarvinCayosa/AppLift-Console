@@ -70,7 +70,9 @@
       background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
       padding: 12px;
       border-radius: 10px;
-      margin-bottom: 12px;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
     }
     
     .exercise-setup-title {
@@ -85,6 +87,7 @@
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 8px;
+      flex: 1;
     }
     
     .exercise-grid label {
@@ -99,7 +102,7 @@
     .exercise-grid input {
       width: 100%;
       padding: 8px;
-      font-size: 13px;
+      font-size: 11px;
       border-radius: 6px;
       border: none;
       min-height: 36px;
@@ -169,6 +172,7 @@
       justify-content: center;
       align-items: center;
       text-align: center;
+      min-height: 220px;
     }
     
     .hero-rep-card h3 {
