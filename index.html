@@ -14,156 +14,135 @@
       -webkit-text-size-adjust: 100%;
     }
     button { 
-      padding: 12px 16px; 
-      font-size: 14px; 
-      margin: 5px; 
+      padding: 10px 14px; 
+      font-size: 13px; 
+      margin: 4px; 
       background-color: #007bff; 
       color: white; 
       border: none; 
-      border-radius: 8px; 
+      border-radius: 6px; 
       cursor: pointer;
       touch-action: manipulation;
-      min-height: 44px;
+      min-height: 38px;
     }
     button:hover { background-color: #0056b3; }
     button:active { transform: scale(0.98); }
     .container { max-width: 1400px; margin: 0 auto; }
     
     h1 {
-      font-size: clamp(18px, 5vw, 28px);
-      margin: 10px 0 15px 0;
+      font-size: clamp(16px, 4vw, 24px);
+      margin: 8px 0 12px 0;
       text-align: center;
     }
     
     /* Controls - Mobile First */
     .controls { 
-      margin-bottom: 15px; 
+      margin-bottom: 12px; 
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 6px;
       align-items: center;
       justify-content: center;
     }
-    .controls button { margin: 0; flex: 1 1 auto; min-width: 120px; max-width: 200px; }
+    .controls button { margin: 0; flex: 1 1 auto; min-width: 100px; max-width: 160px; }
     
     .target-reps-container {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
       justify-content: center;
       width: 100%;
-      margin-top: 10px;
+      margin-top: 8px;
     }
     
     .target-reps-container input {
-      width: 70px;
-      padding: 10px;
-      font-size: 16px;
+      width: 60px;
+      padding: 8px;
+      font-size: 14px;
       border: 2px solid #007bff;
-      border-radius: 8px;
+      border-radius: 6px;
     }
     
     /* Exercise Setup Section */
     .exercise-setup {
       background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-      padding: 15px;
-      border-radius: 12px;
-      margin-bottom: 15px;
+      padding: 12px;
+      border-radius: 10px;
+      margin-bottom: 12px;
     }
     
     .exercise-setup-title {
       color: white;
       font-weight: bold;
       text-align: center;
-      margin-bottom: 12px;
-      font-size: 16px;
+      margin-bottom: 10px;
+      font-size: 14px;
     }
     
     .exercise-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
+      gap: 8px;
     }
     
     .exercise-grid label {
       color: white;
       font-weight: bold;
-      font-size: 12px;
-      margin-bottom: 4px;
+      font-size: 11px;
+      margin-bottom: 3px;
       display: block;
     }
     
     .exercise-grid select,
     .exercise-grid input {
       width: 100%;
-      padding: 10px;
-      font-size: 14px;
-      border-radius: 8px;
+      padding: 8px;
+      font-size: 13px;
+      border-radius: 6px;
       border: none;
-      min-height: 44px;
+      min-height: 36px;
     }
     
     .exercise-info {
       color: white;
-      font-size: 11px;
+      font-size: 10px;
       text-align: center;
-      margin-top: 10px;
+      margin-top: 8px;
       opacity: 0.9;
     }
     
-    /* ROM Calibration Section */
+    /* ROM Calibration Section - Hidden */
     .rom-calibration {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 15px;
-      border-radius: 12px;
-      margin-bottom: 15px;
-      text-align: center;
+      display: none;
     }
-    
-    .rom-calibration button {
-      background: #28a745;
-      font-weight: bold;
-      margin-bottom: 10px;
-    }
-    
-    .rom-values {
-      color: white;
-      font-size: 14px;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 15px;
-    }
-    
-    .rom-values span { white-space: nowrap; }
     
     /* Data Grid */
     .data-grid { 
       display: grid; 
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
-      gap: 10px; 
-      margin-bottom: 15px; 
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); 
+      gap: 8px; 
+      margin-bottom: 12px; 
     }
     .data-card { 
       background: white; 
       border: 1px solid #ddd; 
-      padding: 12px; 
-      border-radius: 10px; 
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+      padding: 10px; 
+      border-radius: 8px; 
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
     }
     .data-card h3 { 
-      margin: 0 0 8px 0; 
+      margin: 0 0 6px 0; 
       color: #333; 
-      font-size: 13px; 
+      font-size: 12px; 
     }
-    .data-card p { margin: 4px 0; font-size: 12px; }
-    .value { font-size: 16px; font-weight: bold; color: #007bff; }
+    .data-card p { margin: 3px 0; font-size: 11px; }
+    .value { font-size: 14px; font-weight: bold; color: #007bff; }
     
     .status { 
-      padding: 6px 12px; 
-      border-radius: 6px; 
-      font-size: 12px; 
+      padding: 4px 8px; 
+      border-radius: 4px; 
+      font-size: 10px; 
       font-weight: bold; 
       display: inline-block; 
     }
@@ -174,16 +153,16 @@
     .hero-section {
       display: flex;
       flex-direction: column;
-      gap: 15px;
-      margin-bottom: 20px;
+      gap: 10px;
+      margin-bottom: 15px;
     }
     
     .hero-rep-card {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
-      padding: 25px 20px;
-      border-radius: 15px;
-      box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+      padding: 15px 12px;
+      border-radius: 12px;
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
       display: flex;
       flex-direction: column;
       justify-content: center;
@@ -192,48 +171,48 @@
     }
     
     .hero-rep-card h3 {
-      margin: 0 0 8px 0;
-      font-size: 18px;
+      margin: 0 0 4px 0;
+      font-size: 14px;
       opacity: 0.9;
     }
     
     .hero-rep-card .rep-value {
-      font-size: clamp(60px, 15vw, 80px);
+      font-size: clamp(36px, 10vw, 48px);
       font-weight: bold;
       line-height: 1;
-      margin-bottom: 8px;
-      text-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      margin-bottom: 4px;
+      text-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
     
     .hero-rep-card .rep-target {
-      font-size: 14px;
+      font-size: 12px;
       opacity: 0.8;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
     }
     
     .hero-chart-container {
       background: white;
-      padding: 15px;
-      border-radius: 15px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-      border: 3px solid #667eea;
+      padding: 12px;
+      border-radius: 12px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+      border: 2px solid #667eea;
     }
     
     .hero-chart-container h3 {
-      margin: 0 0 10px 0;
+      margin: 0 0 8px 0;
       color: #333;
-      font-size: 16px;
+      font-size: 14px;
       text-align: center;
     }
     
     .hero-chart-container canvas {
       width: 100% !important;
-      height: 200px !important;
+      height: 280px !important;
     }
     
     /* Desktop styles */
     @media (min-width: 768px) {
-      body { padding: 20px; }
+      body { padding: 15px; }
       
       h1 { text-align: left; }
       
@@ -250,28 +229,29 @@
       }
       
       .hero-rep-card {
-        min-width: 200px;
-        padding: 30px;
+        min-width: 140px;
+        max-width: 180px;
+        padding: 20px 15px;
       }
       
       .hero-chart-container {
         flex: 1;
-        padding: 25px;
+        padding: 18px;
       }
       
       .hero-chart-container canvas {
-        height: 280px !important;
+        height: 350px !important;
       }
       
       .data-grid {
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 15px;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
       }
       
-      .data-card { padding: 15px; }
-      .data-card h3 { font-size: 16px; }
-      .data-card p { font-size: 14px; }
-      .value { font-size: 20px; }
+      .data-card { padding: 12px; }
+      .data-card h3 { font-size: 14px; }
+      .data-card p { font-size: 13px; }
+      .value { font-size: 16px; }
     }
     
     /* Large desktop */
