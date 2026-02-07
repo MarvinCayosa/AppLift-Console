@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <title>AppLift IMU Monitor - Sliding Window Rep Counter</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -374,7 +375,7 @@
             <select id="exercise-select">
               <optgroup label="Dumbbell">
                 <option value="0" data-equipment="0">Concentration Curls</option>
-                <option value="1" data-equipment="0">Single Arm Overhead Extension</option>
+                <option value="1" data-equipment="0">Overhead Extension</option>
               </optgroup>
               <optgroup label="Barbell">
                 <option value="2" data-equipment="1">Bench Press</option>
@@ -521,7 +522,7 @@
     
     const EXERCISE_MAPPING = {
       0: 'Concentration Curls',
-      1: 'Single Arm Overhead Extension',
+      1: 'Overhead Extension',
       2: 'Bench Press',
       3: 'Back Squats',
       4: 'Lateral Pulldown',
@@ -561,6 +562,8 @@
     const timeData = [];
     const accelMagData = [];
     const accelMagFilteredData = [];
+    const accelZData = [];
+    const accelZFilteredData = [];
     
     // Kalman Filter for each axis
     class KalmanFilter {
@@ -587,7 +590,7 @@
     // Create Kalman filters for each axis
     const kalmanX = new KalmanFilter(0.01, 0.5, 1, 0);
     const kalmanY = new KalmanFilter(0.01, 0.5, 1, 0);
-    const kalmanZ = new KalmanFilter(0.01, 0.5, 1, 9.81);
+    const kalmanZ = new KalmanFilter(0.01, 0.5, 1, 9.81); // Standard measurement noise for Z-axis
     
     // Improved Rep Counter with Sliding Window for Slow Controlled Reps
     class RepCounter {
@@ -596,7 +599,7 @@
         
         // Sliding window parameters (optimized for fast response)
         this.windowDuration = 1.5; // 1.5 second window for faster detection
-        this.windowOverlap = 0.8; // 80% overlap - process almost every sample
+        this.windowOverlap = 0.9; // 80% overlap - process almost every sample
         this.samplingRate = 20; // 20Hz
         this.windowSamples = Math.floor(this.windowDuration * this.samplingRate);
         this.stepSize = Math.floor(this.windowSamples * (1 - this.windowOverlap));
@@ -638,7 +641,7 @@
         this.repStartTime = 0;
       }
       
-      addSample(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, roll, pitch, yaw, accelMag, timestamp) {
+      addSample(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, roll, pitch, yaw, accelMag, filteredZ, timestamp) {
         // Store complete sample data - rep number will be assigned retroactively when rep is detected
         const sample = {
           timestamp: timestamp,
@@ -651,6 +654,8 @@
         };
         
         this.allSamples.push(sample);
+        
+        // Use filtered magnitude for rep detection on ALL exercises
         this.accelBuffer.push(accelMag);
         this.timeBuffer.push(timestamp);
         
@@ -1025,6 +1030,17 @@
           }
         }
       });
+      updateChartLabels();
+    }
+    
+    // Update chart labels based on exercise type
+    function updateChartLabels() {
+      if (!chart) return;
+      
+      // Always show magnitude labels for all exercises
+      chart.data.datasets[0].label = 'Raw Acceleration Magnitude';
+      chart.data.datasets[1].label = 'Filtered Acceleration (Kalman)';
+      chart.update('none');
     }
     
     // Update chart with new data
@@ -1033,7 +1049,7 @@
         // Update labels (time axis)
         chart.data.labels = timeData;
         
-        // Update data arrays
+        // Always show magnitude data for all exercises
         chart.data.datasets[0].data = accelMagData;
         chart.data.datasets[1].data = accelMagFilteredData;
         chart.data.datasets[2].data = Array(timeData.length).fill(repCounter.thresholdHigh);
@@ -1167,12 +1183,16 @@
         timeData.push(displayTime);
         accelMagData.push(accelMag);
         accelMagFilteredData.push(filteredMag);
+        accelZData.push(-imuData.accelZ);
+        accelZFilteredData.push(-filteredZ);
         
         // Keep buffer size manageable
         if (timeData.length > MAX_CHART_POINTS) {
           timeData.shift();
           accelMagData.shift();
           accelMagFilteredData.shift();
+          accelZData.shift();
+          accelZFilteredData.shift();
         }
         
         // Update chart
@@ -1183,7 +1203,7 @@
           imuData.accelX, imuData.accelY, imuData.accelZ,
           imuData.gyroX, imuData.gyroY, imuData.gyroZ,
           imuData.roll, imuData.pitch, imuData.yaw,
-          filteredMag, relativeTime
+          filteredMag, filteredZ, relativeTime
         );
         updateRepStats();
       }
@@ -1740,6 +1760,7 @@
         equipmentSelect.value = selectedEquipment;
         updateQualityOptions();
         updateExerciseDisplay();
+        updateChartLabels();
       });
       
       qualitySelect.addEventListener('change', function() {
