@@ -338,6 +338,7 @@
         <button onclick="connectToBLE()">📶 Connect</button>
         <button onclick="resetRepCount()">🔄 Reset</button>
         <button onclick="toggleRecording()">▶️ Start Recording</button>
+        <button onclick="startNFCLatencyTest()" style="background-color: #17a2b8;">⚡ NFC Latency Test</button>
       </div>
       
       <div class="target-reps-container">
@@ -512,6 +513,11 @@
     let calibrationHoldProgress = 0;
     let calibrationHoldType = null; // 'extended' or 'contracted'
     let calibrationRollSamples = []; // Store samples during 3s hold
+    
+    // NFC Latency Test state
+    let nfcLatencyTestActive = false;
+    let nfcTestStartTime = 0;
+    let nfcLatencyResults = [];
     
     // Exercise and Equipment mapping
     const EQUIPMENT_MAPPING = {
@@ -1227,6 +1233,15 @@
       const value = event.target.value;
       const dataView = new DataView(value.buffer);
       
+      // Calculate latency if test is active
+      let latency = 0;
+      if (nfcLatencyTestActive && nfcTestStartTime > 0) {
+        latency = Date.now() - nfcTestStartTime;
+        nfcLatencyResults.push(latency);
+        nfcLatencyTestActive = false; // Stop test after first detection
+        console.log(`⚡ NFC Latency: ${latency}ms`);
+      }
+      
       // First byte is the length
       const length = dataView.getUint8(0);
       
@@ -1243,8 +1258,12 @@
       const now = new Date();
       document.getElementById('nfc-timestamp').textContent = now.toLocaleTimeString([], { hour12: true });
       
-      // Display NFC equipment notification
-      showNFCNotification(equipmentName);
+      // Display NFC equipment notification (with latency if test was active)
+      if (latency > 0) {
+        showNFCLatencyResult(equipmentName, latency);
+      } else {
+        showNFCNotification(equipmentName);
+      }
     }
 
     function showNFCNotification(equipmentName) {
@@ -1302,6 +1321,161 @@
           document.body.removeChild(notification);
         }, 300);
       }, 3000);
+    }
+
+    function showNFCLatencyResult(equipmentName, latency) {
+      // Create latency result notification
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        padding: 25px 35px;
+        border-radius: 15px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+        font-size: 18px;
+        font-weight: bold;
+        z-index: 10000;
+        animation: slideIn 0.3s ease-out;
+        min-width: 300px;
+        text-align: center;
+      `;
+      
+      // Calculate latency color based on performance
+      let latencyColor = '#ffffff';
+      if (latency < 100) latencyColor = '#00ff88';
+      else if (latency < 200) latencyColor = '#ffff00';
+      else latencyColor = '#ff6b6b';
+      
+      notification.innerHTML = `
+        <div style="font-size: 24px; margin-bottom: 10px;">⚡ NFC Latency Test</div>
+        <div style="font-size: 16px; margin-bottom: 5px;">Equipment: ${equipmentName}</div>
+        <div style="font-size: 28px; color: ${latencyColor}; font-weight: bold;">${latency}ms</div>
+        <div style="font-size: 12px; opacity: 0.9; margin-top: 5px;">
+          ${latency < 100 ? 'Excellent!' : latency < 200 ? 'Good' : 'Could be faster'}
+        </div>
+      `;
+      
+      document.body.appendChild(notification);
+      
+      // Auto-remove after 5 seconds
+      setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-in forwards';
+        setTimeout(() => {
+          if (notification.parentNode) {
+            document.body.removeChild(notification);
+          }
+        }, 300);
+      }, 5000);
+      
+      // Show summary in console
+      console.log(`📊 NFC Latency Test Results: ${nfcLatencyResults.length} tests completed`);
+      if (nfcLatencyResults.length > 1) {
+        const avg = nfcLatencyResults.reduce((a, b) => a + b, 0) / nfcLatencyResults.length;
+        const min = Math.min(...nfcLatencyResults);
+        const max = Math.max(...nfcLatencyResults);
+        console.log(`📈 Average: ${avg.toFixed(1)}ms, Min: ${min}ms, Max: ${max}ms`);
+      }
+    }
+
+    async function startNFCLatencyTest() {
+      if (!device) {
+        alert('Please connect to the BLE device first!');
+        return;
+      }
+      
+      // Create countdown overlay
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.9);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        color: white;
+        text-align: center;
+      `;
+      
+      overlay.innerHTML = `
+        <div style="font-size: clamp(32px, 8vw, 48px); margin-bottom: 30px; font-weight: bold;">
+          ⚡ NFC Latency Test
+        </div>
+        <div style="font-size: clamp(18px, 5vw, 24px); margin-bottom: 40px; opacity: 0.9;">
+          Get ready to scan your NFC tag...
+        </div>
+        <div id="nfc-countdown" style="font-size: clamp(100px, 25vw, 180px); font-weight: bold; color: #ffc107;">
+          3
+        </div>
+        <div style="font-size: clamp(16px, 4vw, 20px); margin-top: 40px; opacity: 0.8;">
+          Hold your NFC tag ready!
+        </div>
+      `;
+      
+      document.body.appendChild(overlay);
+      
+      const countdown = document.getElementById('nfc-countdown');
+      
+      // 3-2-1 countdown
+      for (let i = 3; i > 0; i--) {
+        countdown.textContent = i;
+        countdown.style.color = '#ffc107';
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      // GO! and start timing
+      countdown.textContent = 'GO!';
+      countdown.style.color = '#28a745';
+      countdown.style.animation = 'pulse 0.5s ease-out';
+      
+      // Add pulse animation
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes pulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.1); }
+          100% { transform: scale(1); }
+        }
+      `;
+      document.head.appendChild(style);
+      
+      // Start latency measurement
+      nfcLatencyTestActive = true;
+      nfcTestStartTime = Date.now();
+      
+      console.log('🚀 NFC Latency test started! Scan your NFC tag now...');
+      
+      // Show instructions
+      setTimeout(() => {
+        countdown.textContent = 'SCAN NOW!';
+        countdown.style.fontSize = 'clamp(60px, 15vw, 120px)';
+        countdown.style.color = '#ff6b6b';
+      }, 500);
+      
+      // Auto-close overlay after 10 seconds if no scan detected
+      const timeoutId = setTimeout(() => {
+        if (nfcLatencyTestActive) {
+          nfcLatencyTestActive = false;
+          document.body.removeChild(overlay);
+          alert('⏰ NFC Latency test timed out. No NFC scan detected within 10 seconds.');
+        }
+      }, 10000);
+      
+      // Close overlay when NFC is detected (handled in handleNFCData)
+      const checkForCompletion = setInterval(() => {
+        if (!nfcLatencyTestActive) {
+          clearInterval(checkForCompletion);
+          clearTimeout(timeoutId);
+          document.body.removeChild(overlay);
+        }
+      }, 100);
     }
 
     function displayIMUData(data, accelMag, filteredX, filteredY, filteredZ, filteredMag) {
