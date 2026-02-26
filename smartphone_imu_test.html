@@ -1,0 +1,1281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Smartphone IMU Test - Compare with ESP32</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #4fc3f7;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .card h2 {
+            color: #4fc3f7;
+            margin-bottom: 15px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #f44336;
+            display: inline-block;
+        }
+        
+        .status-dot.active {
+            background: #4caf50;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+        
+        .data-item {
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .data-item label {
+            display: block;
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+        
+        .data-item .value {
+            font-size: 24px;
+            font-weight: bold;
+            font-family: 'Consolas', monospace;
+        }
+        
+        .roll { color: #ff6b6b; }
+        .pitch { color: #4ecdc4; }
+        .yaw { color: #ffe66d; }
+        .accel { color: #a29bfe; }
+        .gyro { color: #fd79a8; }
+        
+        .sensor-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .sensor-section h3 {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #4fc3f7, #2196f3);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(79, 195, 247, 0.4);
+        }
+        
+        .btn-secondary {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 600px) {
+            .comparison {
+                grid-template-columns: 1fr;
+            }
+            .data-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+            .data-item .value {
+                font-size: 18px;
+            }
+        }
+        
+        .diff-card {
+            background: rgba(255, 152, 0, 0.1);
+            border: 1px solid rgba(255, 152, 0, 0.3);
+        }
+        
+        .diff-card .value {
+            color: #ff9800;
+        }
+        
+        .chart-container {
+            height: 200px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            margin-top: 15px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .instructions {
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .instructions h3 {
+            color: #4caf50;
+            margin-bottom: 10px;
+        }
+        
+        .instructions ol {
+            padding-left: 20px;
+            line-height: 1.8;
+        }
+        
+        .warning {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .recording-indicator {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 10px;
+            background: rgba(244, 67, 54, 0.2);
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .recording-indicator.active {
+            display: flex;
+        }
+        
+        .recording-dot {
+            width: 15px;
+            height: 15px;
+            background: #f44336;
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        #logOutput {
+            background: #000;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 150px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Smartphone IMU Test</h1>
+        <p class="subtitle">Compare your phone's IMU with ESP32 sensor</p>
+        
+        <div class="warning">
+            ⚠️ <strong>iOS Users:</strong> You need to grant motion sensor permission. 
+            <strong>Android:</strong> Works automatically in most browsers.
+            <br>Make sure to open this page on your <strong>smartphone</strong>, not desktop!
+        </div>
+        
+        <div class="instructions">
+            <h3>📋 How to Use</h3>
+            <ol>
+                <li>Click "Start Smartphone IMU" to enable phone sensors</li>
+                <li>Optionally connect your ESP32 IMU via Bluetooth</li>
+                <li>Hold phone and ESP32 sensor together in the same orientation</li>
+                <li>Compare the Roll, Pitch, Yaw values between both</li>
+                <li>The "Difference" card shows how much they differ</li>
+            </ol>
+        </div>
+        
+        <!-- Smartphone IMU Card -->
+        <div class="card">
+            <h2>
+                <span class="status-dot" id="phoneStatus"></span>
+                📱 Smartphone IMU
+            </h2>
+            <button class="btn btn-primary" id="startPhoneBtn" onclick="startPhoneIMU()">
+                Start Smartphone IMU
+            </button>
+            
+            <!-- Orientation -->
+            <h3 style="color: #4fc3f7; font-size: 14px; margin: 15px 0 10px 0;">🧭 Orientation</h3>
+            <div class="data-grid">
+                <div class="data-item">
+                    <label>Roll (γ)</label>
+                    <div class="value roll" id="phoneRoll">--</div>
+                </div>
+                <div class="data-item">
+                    <label>Pitch (β)</label>
+                    <div class="value pitch" id="phonePitch">--</div>
+                </div>
+                <div class="data-item">
+                    <label>Yaw (α)</label>
+                    <div class="value yaw" id="phoneYaw">--</div>
+                </div>
+            </div>
+            
+            <!-- Accelerometer -->
+            <div class="sensor-section">
+                <h3>📊 Accelerometer</h3>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <label>Accel X</label>
+                        <div class="value accel" id="phoneAccelX">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Accel Y</label>
+                        <div class="value accel" id="phoneAccelY">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Accel Z</label>
+                        <div class="value accel" id="phoneAccelZ">--</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Gyroscope -->
+            <div class="sensor-section">
+                <h3>🔄 Gyroscope</h3>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <label>Gyro X</label>
+                        <div class="value gyro" id="phoneGyroX">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Gyro Y</label>
+                        <div class="value gyro" id="phoneGyroY">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Gyro Z</label>
+                        <div class="value gyro" id="phoneGyroZ">--</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Phone Quaternion (derived from Euler) -->
+            <div class="sensor-section">
+                <h3>🎯 Quaternion (from Euler)</h3>
+                <div class="data-grid" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="data-item">
+                        <label>W</label>
+                        <div class="value" id="phoneQuatW" style="color: #ce93d8;">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>X</label>
+                        <div class="value" id="phoneQuatX" style="color: #ce93d8;">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Y</label>
+                        <div class="value" id="phoneQuatY" style="color: #ce93d8;">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Z</label>
+                        <div class="value" id="phoneQuatZ" style="color: #ce93d8;">--</div>
+                    </div>
+                </div>
+                <div style="text-align: center; margin-top: 10px;">
+                    <span style="font-size: 12px; color: #888;">Norm: </span>
+                    <span class="value" id="phoneQuatNorm" style="font-size: 16px; color: #ce93d8;">--</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ESP32 IMU Card -->
+        <div class="card">
+            <h2>
+                <span class="status-dot" id="esp32Status"></span>
+                🔌 ESP32 IMU (Bluetooth)
+            </h2>
+            <button class="btn btn-secondary" id="connectBtn" onclick="connectESP32()">
+                Connect ESP32
+            </button>
+            <button class="btn btn-secondary" id="disconnectBtn" onclick="disconnectESP32()" style="display:none;">
+                Disconnect
+            </button>
+            
+            <!-- Orientation -->
+            <h3 style="color: #4fc3f7; font-size: 14px; margin: 15px 0 10px 0;">🧭 Orientation</h3>
+            <div class="data-grid">
+                <div class="data-item">
+                    <label>Roll</label>
+                    <div class="value roll" id="esp32Roll">--</div>
+                </div>
+                <div class="data-item">
+                    <label>Pitch</label>
+                    <div class="value pitch" id="esp32Pitch">--</div>
+                </div>
+                <div class="data-item">
+                    <label>Yaw</label>
+                    <div class="value yaw" id="esp32Yaw">--</div>
+                </div>
+            </div>
+            
+            <!-- Accelerometer -->
+            <div class="sensor-section">
+                <h3>📊 Accelerometer</h3>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <label>Accel X</label>
+                        <div class="value accel" id="esp32AccelX">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Accel Y</label>
+                        <div class="value accel" id="esp32AccelY">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Accel Z</label>
+                        <div class="value accel" id="esp32AccelZ">--</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Gyroscope -->
+            <div class="sensor-section">
+                <h3>🔄 Gyroscope</h3>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <label>Gyro X</label>
+                        <div class="value gyro" id="esp32GyroX">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Gyro Y</label>
+                        <div class="value gyro" id="esp32GyroY">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Gyro Z</label>
+                        <div class="value gyro" id="esp32GyroZ">--</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Quaternion -->
+            <div class="sensor-section">
+                <h3>🎯 Quaternion</h3>
+                <div class="data-grid" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="data-item">
+                        <label>W</label>
+                        <div class="value" id="esp32QuatW" style="color: #81d4fa;">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>X</label>
+                        <div class="value" id="esp32QuatX" style="color: #81d4fa;">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Y</label>
+                        <div class="value" id="esp32QuatY" style="color: #81d4fa;">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Z</label>
+                        <div class="value" id="esp32QuatZ" style="color: #81d4fa;">--</div>
+                    </div>
+                </div>
+                <div style="text-align: center; margin-top: 10px;">
+                    <span style="font-size: 12px; color: #888;">Norm: </span>
+                    <span class="value" id="esp32QuatNorm" style="font-size: 16px; color: #81d4fa;">--</span>
+                    <span id="esp32QuatHealth" style="margin-left: 8px; font-size: 14px;">--</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Difference Card -->
+        <div class="card diff-card">
+            <h2>📊 Difference (ESP32 - Phone)</h2>
+            
+            <!-- Orientation Differences -->
+            <h3 style="color: #ff9800; font-size: 14px; margin: 10px 0;">🧭 Orientation</h3>
+            <div class="data-grid">
+                <div class="data-item">
+                    <label>Δ Roll</label>
+                    <div class="value" id="diffRoll">--</div>
+                </div>
+                <div class="data-item">
+                    <label>Δ Pitch</label>
+                    <div class="value" id="diffPitch">--</div>
+                </div>
+                <div class="data-item">
+                    <label>Δ Yaw</label>
+                    <div class="value" id="diffYaw">--</div>
+                </div>
+            </div>
+            
+            <!-- Accelerometer Differences -->
+            <div class="sensor-section">
+                <h3>📊 Accelerometer</h3>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <label>Δ Accel X</label>
+                        <div class="value" id="diffAccelX">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Δ Accel Y</label>
+                        <div class="value" id="diffAccelY">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Δ Accel Z</label>
+                        <div class="value" id="diffAccelZ">--</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Gyroscope Differences -->
+            <div class="sensor-section">
+                <h3>🔄 Gyroscope</h3>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <label>Δ Gyro X</label>
+                        <div class="value" id="diffGyroX">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Δ Gyro Y</label>
+                        <div class="value" id="diffGyroY">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Δ Gyro Z</label>
+                        <div class="value" id="diffGyroZ">--</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Quaternion Differences -->
+            <div class="sensor-section">
+                <h3>🎯 Quaternion</h3>
+                <div style="text-align: center; margin-bottom: 12px;">
+                    <span style="font-size: 13px; color: #888;">Angular Difference: </span>
+                    <span class="value" id="diffQuatAngle" style="font-size: 22px;">--</span>
+                </div>
+                <div class="data-grid" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="data-item">
+                        <label>Δ W</label>
+                        <div class="value" id="diffQuatW">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Δ X</label>
+                        <div class="value" id="diffQuatX">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Δ Y</label>
+                        <div class="value" id="diffQuatY">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>Δ Z</label>
+                        <div class="value" id="diffQuatZ">--</div>
+                    </div>
+                </div>
+            </div>
+            
+            <p style="text-align: center; margin-top: 15px; color: #888; font-size: 12px;">
+                🟢 Green = Good | 🟠 Orange = Okay | 🔴 Red = Bad<br>
+                Orientation: &lt;5° good | Accel: &lt;1 m/s² good | Gyro: &lt;0.1 rad/s (~5.7°/s) good<br>
+                Quaternion: Angular diff &lt;5° good | &lt;15° okay
+            </p>
+        </div>
+        
+        <!-- Recording -->
+        <div class="card">
+            <h2>🎬 Record Comparison Data</h2>
+            <div class="recording-indicator" id="recordingIndicator">
+                <div class="recording-dot"></div>
+                <span>Recording... <span id="recordCount">0</span> samples</span>
+            </div>
+            <button class="btn btn-primary" id="recordBtn" onclick="toggleRecording()">
+                ⏺ Start Recording
+            </button>
+            <button class="btn btn-secondary" onclick="downloadCSV()" id="downloadBtn" disabled>
+                📥 Download CSV
+            </button>
+        </div>
+        
+        <!-- Debug Log -->
+        <div class="card">
+            <h2>🔧 Debug Log</h2>
+            <div id="logOutput">Waiting for sensor data...</div>
+        </div>
+    </div>
+    
+    <script>
+        // ============== STATE ==============
+        let phoneIMUActive = false;
+        let phoneMotionActive = false;
+        let esp32Connected = false;
+        let isRecording = false;
+        let recordedData = [];
+        
+        let phoneData = { 
+            roll: 0, pitch: 0, yaw: 0,
+            accelX: 0, accelY: 0, accelZ: 0,
+            gyroX: 0, gyroY: 0, gyroZ: 0,
+            qw: 1, qx: 0, qy: 0, qz: 0
+        };
+        let esp32Data = { 
+            roll: 0, pitch: 0, yaw: 0,
+            accelX: 0, accelY: 0, accelZ: 0,
+            gyroX: 0, gyroY: 0, gyroZ: 0,
+            qw: 0, qx: 0, qy: 0, qz: 0
+        };
+        
+        // Gyro sampling rate matching
+        let esp32GyroHistory = {
+            x: [], y: [], z: [], timestamps: []
+        };
+        const GYRO_HISTORY_SIZE = 10; // Keep last 10 samples for interpolation
+        let lastESP32GyroTime = 0;
+        let esp32GyroRate = 0; // Measured rate in Hz
+        
+        // BLE UUIDs for ESP32
+        const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+        const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+        let bluetoothDevice = null;
+        let imuCharacteristic = null;
+        
+        // ============== GYRO RATE MATCHING ==============
+        function addESP32GyroSample(x, y, z, timestamp) {
+            // Add to history
+            esp32GyroHistory.x.push(x);
+            esp32GyroHistory.y.push(y);
+            esp32GyroHistory.z.push(z);
+            esp32GyroHistory.timestamps.push(timestamp);
+            
+            // Keep only recent samples
+            if (esp32GyroHistory.x.length > GYRO_HISTORY_SIZE) {
+                esp32GyroHistory.x.shift();
+                esp32GyroHistory.y.shift();
+                esp32GyroHistory.z.shift();
+                esp32GyroHistory.timestamps.shift();
+            }
+            
+            // Calculate ESP32 gyro sampling rate
+            if (lastESP32GyroTime > 0 && esp32GyroHistory.timestamps.length >= 2) {
+                const timeDiffs = [];
+                for (let i = 1; i < esp32GyroHistory.timestamps.length; i++) {
+                    timeDiffs.push(esp32GyroHistory.timestamps[i] - esp32GyroHistory.timestamps[i-1]);
+                }
+                const avgTimeDiff = timeDiffs.reduce((a, b) => a + b, 0) / timeDiffs.length;
+                esp32GyroRate = 1000 / avgTimeDiff; // Convert ms to Hz
+            }
+            lastESP32GyroTime = timestamp;
+        }
+        
+        function getInterpolatedESP32Gyro(targetTime) {
+            if (esp32GyroHistory.timestamps.length < 2) {
+                // Not enough data for interpolation
+                return {
+                    x: esp32GyroHistory.x[esp32GyroHistory.x.length - 1] || 0,
+                    y: esp32GyroHistory.y[esp32GyroHistory.y.length - 1] || 0,
+                    z: esp32GyroHistory.z[esp32GyroHistory.z.length - 1] || 0
+                };
+            }
+            
+            const timestamps = esp32GyroHistory.timestamps;
+            const lastTime = timestamps[timestamps.length - 1];
+            const timeDiff = targetTime - lastTime;
+            
+            // If target time is very recent (within 100ms), use latest value
+            if (Math.abs(timeDiff) < 100) {
+                return {
+                    x: esp32GyroHistory.x[esp32GyroHistory.x.length - 1],
+                    y: esp32GyroHistory.y[esp32GyroHistory.y.length - 1],
+                    z: esp32GyroHistory.z[esp32GyroHistory.z.length - 1]
+                };
+            }
+            
+            // Linear interpolation between last two samples
+            if (timestamps.length >= 2) {
+                const t1 = timestamps[timestamps.length - 2];
+                const t2 = timestamps[timestamps.length - 1];
+                
+                if (targetTime >= t1 && targetTime <= t2) {
+                    const factor = (targetTime - t1) / (t2 - t1);
+                    
+                    return {
+                        x: esp32GyroHistory.x[esp32GyroHistory.x.length - 2] + 
+                           factor * (esp32GyroHistory.x[esp32GyroHistory.x.length - 1] - esp32GyroHistory.x[esp32GyroHistory.x.length - 2]),
+                        y: esp32GyroHistory.y[esp32GyroHistory.y.length - 2] + 
+                           factor * (esp32GyroHistory.y[esp32GyroHistory.y.length - 1] - esp32GyroHistory.y[esp32GyroHistory.y.length - 2]),
+                        z: esp32GyroHistory.z[esp32GyroHistory.z.length - 2] + 
+                           factor * (esp32GyroHistory.z[esp32GyroHistory.z.length - 1] - esp32GyroHistory.z[esp32GyroHistory.z.length - 2])
+                    };
+                }
+            }
+            
+            // Fallback to latest value
+            return {
+                x: esp32GyroHistory.x[esp32GyroHistory.x.length - 1] || 0,
+                y: esp32GyroHistory.y[esp32GyroHistory.y.length - 1] || 0,
+                z: esp32GyroHistory.z[esp32GyroHistory.z.length - 1] || 0
+            };
+        }
+        
+        // ============== LOGGING ==============
+        function log(message) {
+            const logOutput = document.getElementById('logOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            logOutput.innerHTML = `[${timestamp}] ${message}<br>` + logOutput.innerHTML;
+            if (logOutput.children.length > 50) {
+                logOutput.removeChild(logOutput.lastChild);
+            }
+        }
+        
+        // ============== SMARTPHONE IMU ==============
+        async function startPhoneIMU() {
+            log('Starting smartphone IMU...');
+            
+            // Check if DeviceOrientationEvent is available
+            if (!window.DeviceOrientationEvent) {
+                log('ERROR: DeviceOrientation not supported on this device/browser');
+                alert('Your device or browser does not support motion sensors.');
+                return;
+            }
+            
+            // iOS 13+ requires permission request
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission !== 'granted') {
+                        log('ERROR: Motion permission denied');
+                        alert('Motion sensor permission was denied. Please allow access.');
+                        return;
+                    }
+                    log('iOS motion permission granted');
+                } catch (error) {
+                    log('ERROR requesting permission: ' + error.message);
+                    alert('Error requesting motion permission: ' + error.message);
+                    return;
+                }
+            }
+            
+            // Also request DeviceMotion permission for iOS
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const permission = await DeviceMotionEvent.requestPermission();
+                    if (permission !== 'granted') {
+                        log('WARNING: Accelerometer/Gyro permission denied');
+                    } else {
+                        log('iOS accelerometer/gyro permission granted');
+                    }
+                } catch (error) {
+                    log('WARNING: Could not request motion permission: ' + error.message);
+                }
+            }
+            
+            // Add event listeners
+            window.addEventListener('deviceorientation', handlePhoneOrientation, true);
+            window.addEventListener('devicemotion', handlePhoneMotion, true);
+            
+            phoneIMUActive = true;
+            phoneMotionActive = true;
+            document.getElementById('phoneStatus').classList.add('active');
+            document.getElementById('startPhoneBtn').textContent = 'Smartphone IMU Active';
+            document.getElementById('startPhoneBtn').disabled = true;
+            
+            log('Smartphone IMU started successfully (orientation + motion)');
+        }
+        
+        function handlePhoneOrientation(event) {
+            // DeviceOrientationEvent provides:
+            // - alpha: rotation around Z axis (0-360) - compass direction / yaw
+            // - beta: rotation around X axis (-180 to 180) - front/back tilt / pitch
+            // - gamma: rotation around Y axis (-90 to 90) - left/right tilt / roll
+            
+            // Map to our convention (matching ESP32 output)
+            phoneData.yaw = event.alpha || 0;      // Compass heading
+            phoneData.pitch = event.beta || 0;     // Front/back tilt
+            phoneData.roll = event.gamma || 0;     // Left/right tilt
+            
+            // Compute quaternion from Euler angles (ZXY convention for device orientation)
+            const alpha = (event.alpha || 0) * (Math.PI / 180); // yaw
+            const beta  = (event.beta  || 0) * (Math.PI / 180); // pitch
+            const gamma = (event.gamma || 0) * (Math.PI / 180); // roll
+            
+            const cA = Math.cos(alpha / 2), sA = Math.sin(alpha / 2);
+            const cB = Math.cos(beta  / 2), sB = Math.sin(beta  / 2);
+            const cG = Math.cos(gamma / 2), sG = Math.sin(gamma / 2);
+            
+            // ZXY rotation order (standard for device orientation)
+            phoneData.qw = cA * cB * cG - sA * sB * sG;
+            phoneData.qx = cA * sB * cG - sA * cB * sG;
+            phoneData.qy = cA * sB * sG + sA * cB * cG;
+            phoneData.qz = cA * cB * sG + sA * sB * cG;
+            
+            // Normalize
+            const norm = Math.sqrt(phoneData.qw**2 + phoneData.qx**2 + phoneData.qy**2 + phoneData.qz**2);
+            if (norm > 0) {
+                phoneData.qw /= norm;
+                phoneData.qx /= norm;
+                phoneData.qy /= norm;
+                phoneData.qz /= norm;
+            }
+            
+            // Update UI
+            document.getElementById('phoneRoll').textContent = phoneData.roll.toFixed(1) + '°';
+            document.getElementById('phonePitch').textContent = phoneData.pitch.toFixed(1) + '°';
+            document.getElementById('phoneYaw').textContent = phoneData.yaw.toFixed(1) + '°';
+            
+            document.getElementById('phoneQuatW').textContent = phoneData.qw.toFixed(4);
+            document.getElementById('phoneQuatX').textContent = phoneData.qx.toFixed(4);
+            document.getElementById('phoneQuatY').textContent = phoneData.qy.toFixed(4);
+            document.getElementById('phoneQuatZ').textContent = phoneData.qz.toFixed(4);
+            document.getElementById('phoneQuatNorm').textContent = norm.toFixed(4);
+            
+            updateDifference();
+            
+            if (isRecording) {
+                recordSample();
+            }
+        }
+        
+        // Throttle phone gyro sampling rate to match ESP32 (~20Hz)
+        let lastPhoneGyroUpdate = 0;
+        const PHONE_GYRO_INTERVAL_MS = 50; // 50ms = 20Hz sampling rate
+        
+        function handlePhoneMotion(event) {
+            // DeviceMotionEvent provides:
+            // - accelerationIncludingGravity: acceleration with gravity (m/s²)
+            // - acceleration: acceleration without gravity (m/s²) - may be null on some devices
+            // - rotationRate: gyroscope data (deg/s)
+            
+            // Use accelerationIncludingGravity (more widely supported)
+            // Keep in m/s² to match ESP32 output (no conversion needed)
+            const accel = event.accelerationIncludingGravity;
+            if (accel) {
+                phoneData.accelX = accel.x || 0;
+                phoneData.accelY = accel.y || 0;
+                phoneData.accelZ = accel.z || 0;
+                
+                document.getElementById('phoneAccelX').textContent = phoneData.accelX.toFixed(2) + ' m/s²';
+                document.getElementById('phoneAccelY').textContent = phoneData.accelY.toFixed(2) + ' m/s²';
+                document.getElementById('phoneAccelZ').textContent = phoneData.accelZ.toFixed(2) + ' m/s²';
+            }
+            
+            // Throttle gyroscope updates to 20Hz to match ESP32
+            const currentTime = Date.now();
+            if (currentTime - lastPhoneGyroUpdate < PHONE_GYRO_INTERVAL_MS) {
+                return; // Skip this update to reduce sampling rate
+            }
+            lastPhoneGyroUpdate = currentTime;
+            
+            // Gyroscope data (rotation rate)
+            const gyro = event.rotationRate;
+            if (gyro) {
+                // Phone provides rotation rate - browsers typically provide deg/s
+                const gyroXDeg = gyro.beta || 0;   // Rotation around X axis (deg/s)
+                const gyroYDeg = gyro.gamma || 0;  // Rotation around Y axis (deg/s)
+                const gyroZDeg = gyro.alpha || 0;  // Rotation around Z axis (deg/s)
+                
+                // Convert to rad/s (PRIMARY STORAGE FORMAT FOR PHONE)
+                phoneData.gyroX = gyroXDeg * (Math.PI / 180);
+                phoneData.gyroY = gyroYDeg * (Math.PI / 180);
+                phoneData.gyroZ = gyroZDeg * (Math.PI / 180);
+                
+                // Also store deg/s for reference
+                phoneData.gyroXDeg = gyroXDeg;
+                phoneData.gyroYDeg = gyroYDeg;
+                phoneData.gyroZDeg = gyroZDeg;
+                
+                // Display in rad/s (PHONE FORMAT)
+                document.getElementById('phoneGyroX').textContent = `${phoneData.gyroX.toFixed(3)} rad/s`;
+                document.getElementById('phoneGyroY').textContent = `${phoneData.gyroY.toFixed(3)} rad/s`;
+                document.getElementById('phoneGyroZ').textContent = `${phoneData.gyroZ.toFixed(3)} rad/s`;
+                
+                // Update ESP32 gyro display with interpolated values at phone's timing
+                if (esp32Connected && esp32GyroHistory.timestamps.length > 0) {
+                    const interpolatedGyro = getInterpolatedESP32Gyro(currentTime);
+                    
+                    // Store ESP32 gyro in deg/s (PRIMARY FORMAT FOR ESP32)
+                    esp32Data.gyroXDeg = interpolatedGyro.x;
+                    esp32Data.gyroYDeg = interpolatedGyro.y;
+                    esp32Data.gyroZDeg = interpolatedGyro.z;
+                    
+                    // Also convert to rad/s for calculations
+                    esp32Data.gyroX = interpolatedGyro.x * (Math.PI / 180);
+                    esp32Data.gyroY = interpolatedGyro.y * (Math.PI / 180);
+                    esp32Data.gyroZ = interpolatedGyro.z * (Math.PI / 180);
+                    
+                    // Display in deg/s (ESP32 FORMAT)
+                    document.getElementById('esp32GyroX').textContent = `${esp32Data.gyroXDeg.toFixed(1)}°/s (${esp32GyroRate.toFixed(1)}Hz)`;
+                    document.getElementById('esp32GyroY').textContent = `${esp32Data.gyroYDeg.toFixed(1)}°/s`;
+                    document.getElementById('esp32GyroZ').textContent = `${esp32Data.gyroZDeg.toFixed(1)}°/s`;
+                }
+            }
+            
+            updateDifference();
+        }
+        
+        // ============== ESP32 BLUETOOTH ==============
+        async function connectESP32() {
+            try {
+                log('Scanning for ESP32 (AppLift_IMU)...');
+                
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'AppLift_IMU' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+                
+                log('Connecting to ' + bluetoothDevice.name + '...');
+                const server = await bluetoothDevice.gatt.connect();
+                
+                log('Getting IMU service...');
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                
+                log('Getting IMU characteristic...');
+                imuCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                
+                log('Starting notifications...');
+                await imuCharacteristic.startNotifications();
+                imuCharacteristic.addEventListener('characteristicvaluechanged', handleESP32Data);
+                
+                // Update UI
+                esp32Connected = true;
+                document.getElementById('esp32Status').classList.add('active');
+                document.getElementById('connectBtn').style.display = 'none';
+                document.getElementById('disconnectBtn').style.display = 'block';
+                
+                log('ESP32 connected successfully!');
+                
+                // Handle disconnection
+                bluetoothDevice.addEventListener('gattserverdisconnected', () => {
+                    log('ESP32 disconnected');
+                    esp32Connected = false;
+                    document.getElementById('esp32Status').classList.remove('active');
+                    document.getElementById('connectBtn').style.display = 'block';
+                    document.getElementById('disconnectBtn').style.display = 'none';
+                });
+                
+            } catch (error) {
+                log('ERROR: ' + error.message);
+                alert('Connection failed: ' + error.message);
+            }
+        }
+        
+        function handleESP32Data(event) {
+            const value = event.target.value;
+            const dataView = new DataView(value.buffer);
+            
+            // Parse the 56-byte data array
+            // Format: accelX(4) + accelY(4) + accelZ(4) + gyroX(4) + gyroY(4) + gyroZ(4) + roll(4) + pitch(4) + yaw(4) + qw(4) + qx(4) + qy(4) + qz(4) + timestamp(4)
+            try {
+                // Accelerometer (bytes 0-11)
+                esp32Data.accelX = dataView.getFloat32(0, true);   // bytes 0-3
+                esp32Data.accelY = dataView.getFloat32(4, true);   // bytes 4-7
+                esp32Data.accelZ = dataView.getFloat32(8, true);   // bytes 8-11
+                
+                // Gyroscope (bytes 12-23) - RAW values from ESP32 in deg/s
+                const rawGyroX = dataView.getFloat32(12, true);   // bytes 12-15
+                const rawGyroY = dataView.getFloat32(16, true);   // bytes 16-19
+                const rawGyroZ = dataView.getFloat32(20, true);   // bytes 20-23
+                
+                // Store ESP32 gyro in deg/s (PRIMARY FORMAT FOR ESP32)
+                esp32Data.gyroXDeg = rawGyroX;
+                esp32Data.gyroYDeg = rawGyroY;
+                esp32Data.gyroZDeg = rawGyroZ;
+                
+                // Add to gyro history for rate matching with phone (in deg/s)
+                const currentTime = Date.now();
+                addESP32GyroSample(rawGyroX, rawGyroY, rawGyroZ, currentTime);
+                
+                // Also convert to rad/s for calculations
+                esp32Data.gyroX = rawGyroX * (Math.PI / 180);
+                esp32Data.gyroY = rawGyroY * (Math.PI / 180);
+                esp32Data.gyroZ = rawGyroZ * (Math.PI / 180);
+                
+                // Orientation (bytes 24-35)
+                esp32Data.roll = dataView.getFloat32(24, true);    // bytes 24-27
+                esp32Data.pitch = dataView.getFloat32(28, true);   // bytes 28-31
+                esp32Data.yaw = dataView.getFloat32(32, true);     // bytes 32-35
+                
+                // Quaternion (bytes 36-51)
+                esp32Data.qw = dataView.getFloat32(36, true);      // bytes 36-39
+                esp32Data.qx = dataView.getFloat32(40, true);      // bytes 40-43
+                esp32Data.qy = dataView.getFloat32(44, true);      // bytes 44-47
+                esp32Data.qz = dataView.getFloat32(48, true);      // bytes 48-51
+                // timestamp at bytes 52-55
+                
+                // Update Orientation UI
+                document.getElementById('esp32Roll').textContent = esp32Data.roll.toFixed(1) + '°';
+                document.getElementById('esp32Pitch').textContent = esp32Data.pitch.toFixed(1) + '°';
+                document.getElementById('esp32Yaw').textContent = esp32Data.yaw.toFixed(1) + '°';
+                
+                // Update Accelerometer UI
+                document.getElementById('esp32AccelX').textContent = esp32Data.accelX.toFixed(2) + ' m/s²';
+                document.getElementById('esp32AccelY').textContent = esp32Data.accelY.toFixed(2) + ' m/s²';
+                document.getElementById('esp32AccelZ').textContent = esp32Data.accelZ.toFixed(2) + ' m/s²';
+                
+                // Update Gyroscope UI - only if phone isn't active (to avoid overwriting interpolated values)
+                if (!phoneIMUActive) {
+                    document.getElementById('esp32GyroX').textContent = `${esp32Data.gyroXDeg.toFixed(1)}°/s (${esp32GyroRate.toFixed(1)}Hz)`;
+                    document.getElementById('esp32GyroY').textContent = `${esp32Data.gyroYDeg.toFixed(1)}°/s`;
+                    document.getElementById('esp32GyroZ').textContent = `${esp32Data.gyroZDeg.toFixed(1)}°/s`;
+                }
+                
+                // Update Quaternion UI
+                document.getElementById('esp32QuatW').textContent = esp32Data.qw.toFixed(4);
+                document.getElementById('esp32QuatX').textContent = esp32Data.qx.toFixed(4);
+                document.getElementById('esp32QuatY').textContent = esp32Data.qy.toFixed(4);
+                document.getElementById('esp32QuatZ').textContent = esp32Data.qz.toFixed(4);
+                
+                // Quaternion norm check (should be ~1.0 when calibrated)
+                const quatNorm = Math.sqrt(esp32Data.qw**2 + esp32Data.qx**2 + esp32Data.qy**2 + esp32Data.qz**2);
+                document.getElementById('esp32QuatNorm').textContent = quatNorm.toFixed(4);
+                
+                const normError = Math.abs(quatNorm - 1.0);
+                const healthEl = document.getElementById('esp32QuatHealth');
+                if (normError < 0.01) {
+                    healthEl.textContent = '✅ Calibrated';
+                    healthEl.style.color = '#4caf50';
+                } else if (normError < 0.05) {
+                    healthEl.textContent = '⚠️ Drifting';
+                    healthEl.style.color = '#ff9800';
+                } else {
+                    healthEl.textContent = '❌ Not Calibrated';
+                    healthEl.style.color = '#f44336';
+                }
+                
+                // Log raw gyro values and sampling rate periodically for debugging
+                if (Math.random() < 0.05) { // Log ~5% of samples
+                    log(`ESP32: ${rawGyroX.toFixed(2)}°/s, ${rawGyroY.toFixed(2)}°/s, ${rawGyroZ.toFixed(2)}°/s | Rate: ${esp32GyroRate.toFixed(1)}Hz`);
+                }
+                
+                updateDifference();
+                
+            } catch (error) {
+                log('Error parsing ESP32 data: ' + error.message);
+            }
+        }
+        
+        async function disconnectESP32() {
+            if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+                bluetoothDevice.gatt.disconnect();
+            }
+        }
+        
+        // ============== DIFFERENCE CALCULATION ==============
+        function updateDifference() {
+            if (!phoneIMUActive || !esp32Connected) {
+                return;
+            }
+            
+            // Orientation differences
+            const diffRoll = esp32Data.roll - phoneData.roll;
+            const diffPitch = esp32Data.pitch - phoneData.pitch;
+            
+            // Yaw difference needs special handling due to 0/360 wraparound
+            let diffYaw = esp32Data.yaw - phoneData.yaw;
+            if (diffYaw > 180) diffYaw -= 360;
+            if (diffYaw < -180) diffYaw += 360;
+            
+            document.getElementById('diffRoll').textContent = diffRoll.toFixed(1) + '°';
+            document.getElementById('diffPitch').textContent = diffPitch.toFixed(1) + '°';
+            document.getElementById('diffYaw').textContent = diffYaw.toFixed(1) + '°';
+            
+            // Color code orientation differences
+            colorCodeDiff('diffRoll', Math.abs(diffRoll), 5, 15);
+            colorCodeDiff('diffPitch', Math.abs(diffPitch), 5, 15);
+            colorCodeDiff('diffYaw', Math.abs(diffYaw), 5, 15);
+            
+            // Accelerometer differences (now in m/s²)
+            const diffAccelX = esp32Data.accelX - phoneData.accelX;
+            const diffAccelY = esp32Data.accelY - phoneData.accelY;
+            const diffAccelZ = esp32Data.accelZ - phoneData.accelZ;
+            
+            document.getElementById('diffAccelX').textContent = diffAccelX.toFixed(2) + ' m/s²';
+            document.getElementById('diffAccelY').textContent = diffAccelY.toFixed(2) + ' m/s²';
+            document.getElementById('diffAccelZ').textContent = diffAccelZ.toFixed(2) + ' m/s²';
+            
+            // Color code accel differences (1 m/s² = good, 3 m/s² = okay)
+            colorCodeDiff('diffAccelX', Math.abs(diffAccelX), 1.0, 3.0);
+            colorCodeDiff('diffAccelY', Math.abs(diffAccelY), 1.0, 3.0);
+            colorCodeDiff('diffAccelZ', Math.abs(diffAccelZ), 1.0, 3.0);
+            
+            // Gyroscope differences - convert ESP32 deg/s to rad/s for comparison with phone rad/s
+            const esp32GyroXRad = (esp32Data.gyroXDeg || 0) * (Math.PI / 180);
+            const esp32GyroYRad = (esp32Data.gyroYDeg || 0) * (Math.PI / 180);
+            const esp32GyroZRad = (esp32Data.gyroZDeg || 0) * (Math.PI / 180);
+            
+            const diffGyroX = esp32GyroXRad - (phoneData.gyroX || 0);
+            const diffGyroY = esp32GyroYRad - (phoneData.gyroY || 0);
+            const diffGyroZ = esp32GyroZRad - (phoneData.gyroZ || 0);
+            
+            document.getElementById('diffGyroX').textContent = diffGyroX.toFixed(3) + ' rad/s';
+            document.getElementById('diffGyroY').textContent = diffGyroY.toFixed(3) + ' rad/s';
+            document.getElementById('diffGyroZ').textContent = diffGyroZ.toFixed(3) + ' rad/s';
+            
+            // Color code gyro differences (0.1 rad/s = good, 0.35 rad/s = okay)
+            // 0.1 rad/s ≈ 5.7°/s, 0.35 rad/s ≈ 20°/s
+            colorCodeDiff('diffGyroX', Math.abs(diffGyroX), 0.1, 0.35);
+            colorCodeDiff('diffGyroY', Math.abs(diffGyroY), 0.1, 0.35);
+            colorCodeDiff('diffGyroZ', Math.abs(diffGyroZ), 0.1, 0.35);
+            
+            // Quaternion comparison
+            // Angular difference between two quaternions: angle = 2 * acos(|q1 · q2|)
+            const dotProduct = phoneData.qw * esp32Data.qw + phoneData.qx * esp32Data.qx + 
+                               phoneData.qy * esp32Data.qy + phoneData.qz * esp32Data.qz;
+            // Clamp to valid acos range
+            const clampedDot = Math.min(1, Math.max(-1, Math.abs(dotProduct)));
+            const angularDiffRad = 2 * Math.acos(clampedDot);
+            const angularDiffDeg = angularDiffRad * (180 / Math.PI);
+            
+            document.getElementById('diffQuatAngle').textContent = angularDiffDeg.toFixed(1) + '°';
+            colorCodeDiff('diffQuatAngle', angularDiffDeg, 5, 15);
+            
+            // Per-component diffs
+            const dqw = esp32Data.qw - (dotProduct < 0 ? -phoneData.qw : phoneData.qw);
+            const dqx = esp32Data.qx - (dotProduct < 0 ? -phoneData.qx : phoneData.qx);
+            const dqy = esp32Data.qy - (dotProduct < 0 ? -phoneData.qy : phoneData.qy);
+            const dqz = esp32Data.qz - (dotProduct < 0 ? -phoneData.qz : phoneData.qz);
+            document.getElementById('diffQuatW').textContent = dqw.toFixed(4);
+            document.getElementById('diffQuatX').textContent = dqx.toFixed(4);
+            document.getElementById('diffQuatY').textContent = dqy.toFixed(4);
+            document.getElementById('diffQuatZ').textContent = dqz.toFixed(4);
+            colorCodeDiff('diffQuatW', Math.abs(dqw), 0.05, 0.15);
+            colorCodeDiff('diffQuatX', Math.abs(dqx), 0.05, 0.15);
+            colorCodeDiff('diffQuatY', Math.abs(dqy), 0.05, 0.15);
+            colorCodeDiff('diffQuatZ', Math.abs(dqz), 0.05, 0.15);
+        }
+        
+        function colorCodeDiff(elementId, diff, goodThreshold, okayThreshold) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            
+            if (diff < goodThreshold) {
+                el.style.color = '#4caf50'; // Green - good
+            } else if (diff < okayThreshold) {
+                el.style.color = '#ff9800'; // Orange - okay
+            } else {
+                el.style.color = '#f44336'; // Red - bad
+            }
+        }
+        
+        // ============== RECORDING ==============
+        function toggleRecording() {
+            if (!isRecording) {
+                // Start recording
+                isRecording = true;
+                recordedData = [];
+                document.getElementById('recordBtn').textContent = '⏹ Stop Recording';
+                document.getElementById('recordingIndicator').classList.add('active');
+                document.getElementById('downloadBtn').disabled = true;
+                log('Recording started');
+            } else {
+                // Stop recording
+                isRecording = false;
+                document.getElementById('recordBtn').textContent = '⏺ Start Recording';
+                document.getElementById('recordingIndicator').classList.remove('active');
+                document.getElementById('downloadBtn').disabled = false;
+                log('Recording stopped. ' + recordedData.length + ' samples collected.');
+            }
+        }
+        
+        function recordSample() {
+            const timestamp = Date.now();
+            
+            // Convert ESP32 deg/s to rad/s for comparison
+            const esp32GyroXRad = esp32Connected ? ((esp32Data.gyroXDeg || 0) * (Math.PI / 180)) : null;
+            const esp32GyroYRad = esp32Connected ? ((esp32Data.gyroYDeg || 0) * (Math.PI / 180)) : null;
+            const esp32GyroZRad = esp32Connected ? ((esp32Data.gyroZDeg || 0) * (Math.PI / 180)) : null;
+            
+            recordedData.push({
+                timestamp_ms: timestamp,
+                // Phone orientation
+                phone_roll: phoneData.roll,
+                phone_pitch: phoneData.pitch,
+                phone_yaw: phoneData.yaw,
+                // Phone accelerometer
+                phone_accelX: phoneData.accelX,
+                phone_accelY: phoneData.accelY,
+                phone_accelZ: phoneData.accelZ,
+                // Phone gyroscope (rad/s - native format)
+                phone_gyroX_rad: phoneData.gyroX,
+                phone_gyroY_rad: phoneData.gyroY,
+                phone_gyroZ_rad: phoneData.gyroZ,
+                // ESP32 orientation
+                esp32_roll: esp32Connected ? esp32Data.roll : null,
+                esp32_pitch: esp32Connected ? esp32Data.pitch : null,
+                esp32_yaw: esp32Connected ? esp32Data.yaw : null,
+                // ESP32 accelerometer
+                esp32_accelX: esp32Connected ? esp32Data.accelX : null,
+                esp32_accelY: esp32Connected ? esp32Data.accelY : null,
+                esp32_accelZ: esp32Connected ? esp32Data.accelZ : null,
+                // ESP32 gyroscope (deg/s - native format)
+                esp32_gyroX_deg: esp32Connected ? (esp32Data.gyroXDeg || 0) : null,
+                esp32_gyroY_deg: esp32Connected ? (esp32Data.gyroYDeg || 0) : null,
+                esp32_gyroZ_deg: esp32Connected ? (esp32Data.gyroZDeg || 0) : null,
+                // ESP32 gyroscope (converted to rad/s for comparison)
+                esp32_gyroX_rad: esp32GyroXRad,
+                esp32_gyroY_rad: esp32GyroYRad,
+                esp32_gyroZ_rad: esp32GyroZRad,
+                // ESP32 quaternion
+                esp32_qw: esp32Connected ? esp32Data.qw : null,
+                esp32_qx: esp32Connected ? esp32Data.qx : null,
+                esp32_qy: esp32Connected ? esp32Data.qy : null,
+                esp32_qz: esp32Connected ? esp32Data.qz : null,
+                esp32_quatNorm: esp32Connected ? Math.sqrt(esp32Data.qw**2 + esp32Data.qx**2 + esp32Data.qy**2 + esp32Data.qz**2) : null,
+                // Differences
+                diff_roll: esp32Connected ? (esp32Data.roll - phoneData.roll) : null,
+                diff_pitch: esp32Connected ? (esp32Data.pitch - phoneData.pitch) : null,
+                diff_yaw: esp32Connected ? (esp32Data.yaw - phoneData.yaw) : null,
+                diff_accelX: esp32Connected ? (esp32Data.accelX - phoneData.accelX) : null,
+                diff_accelY: esp32Connected ? (esp32Data.accelY - phoneData.accelY) : null,
+                diff_accelZ: esp32Connected ? (esp32Data.accelZ - phoneData.accelZ) : null,
+                diff_gyroX_rad: esp32Connected ? (esp32GyroXRad - phoneData.gyroX) : null,
+                diff_gyroY_rad: esp32Connected ? (esp32GyroYRad - phoneData.gyroY) : null,
+                diff_gyroZ_rad: esp32Connected ? (esp32GyroZRad - phoneData.gyroZ) : null,
+                // Phone quaternion
+                phone_qw: phoneData.qw,
+                phone_qx: phoneData.qx,
+                phone_qy: phoneData.qy,
+                phone_qz: phoneData.qz,
+                // Quaternion angular difference (degrees)
+                diff_quat_angle_deg: esp32Connected ? (() => {
+                    const dot = phoneData.qw * esp32Data.qw + phoneData.qx * esp32Data.qx + 
+                                phoneData.qy * esp32Data.qy + phoneData.qz * esp32Data.qz;
+                    return 2 * Math.acos(Math.min(1, Math.max(-1, Math.abs(dot)))) * (180 / Math.PI);
+                })() : null
+            });
+            
+            document.getElementById('recordCount').textContent = recordedData.length;
+        }
+        
+        function downloadCSV() {
+            if (recordedData.length === 0) {
+                alert('No data to download');
+                return;
+            }
+            
+            // Create CSV content
+            const headers = Object.keys(recordedData[0]);
+            let csv = headers.join(',') + '\n';
+            
+            recordedData.forEach(row => {
+                csv += headers.map(h => row[h] !== null ? row[h] : '').join(',') + '\n';
+            });
+            
+            // Download
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `imu_comparison_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            log('CSV downloaded: ' + recordedData.length + ' rows');
+        }
+        
+        // ============== INITIALIZATION ==============
+        log('IMU Comparison Tool loaded');
+        log('Open this page on your smartphone for best results');
+        
+        // Check if running on mobile
+        if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+            log('Mobile device detected ✓');
+        } else {
+            log('WARNING: Not a mobile device - phone IMU may not work');
+        }
+        
+        // Check for Web Bluetooth support
+        if (navigator.bluetooth) {
+            log('Web Bluetooth supported ✓');
+        } else {
+            log('WARNING: Web Bluetooth not supported - ESP32 connection disabled');
+            document.getElementById('connectBtn').disabled = true;
+        }
+    </script>
+</body>
+</html>

@@ -339,6 +339,7 @@
         <button onclick="resetRepCount()">🔄 Reset</button>
         <button onclick="toggleRecording()">▶️ Start Recording</button>
         <button onclick="startNFCLatencyTest()" style="background-color: #17a2b8;">⚡ NFC Latency Test</button>
+        <button onclick="window.location.href='smartphone_imu_test.html'" style="background-color: #6f42c1;">📱 Phone IMU Test</button>
       </div>
       
       <div class="target-reps-container">
@@ -446,6 +447,14 @@
       </div>
       
       <div class="data-card">
+        <h3>Quaternion</h3>
+        <p>W: <span class="value" id="quat-w">--</span></p>
+        <p>X: <span class="value" id="quat-x">--</span></p>
+        <p>Y: <span class="value" id="quat-y">--</span></p>
+        <p>Z: <span class="value" id="quat-z">--</span></p>
+      </div>
+      
+      <div class="data-card">
         <h3>Rep Detection (Sliding Window)</h3>
         <p>State: <span class="value" id="rep-state">--</span></p>
         <p>Buffer: <span class="value" id="buffer-state">--</span></p>
@@ -472,6 +481,15 @@
         <p>Avg Time: <span class="value" id="avg-rep-time">--</span>s</p>
         <p>Last Rep: <span class="value" id="last-rep-time">--</span>s</p>
         <p>Total Time: <span class="value" id="total-time">--</span>s</p>
+      </div>
+      
+      <div class="data-card">
+        <h3>📐 Equipment ROM</h3>
+        <p>Type: <span class="value" id="rom-type">--</span></p>
+        <p>Last Rep: <span class="value" id="rom-last-rep">--</span></p>
+        <p>Avg ROM: <span class="value" id="rom-avg">--</span></p>
+        <p>Max ROM: <span class="value" id="rom-max">--</span></p>
+        <p>Consistency: <span class="value" id="rom-consistency">--</span></p>
       </div>
       
       <div class="data-card">
@@ -647,13 +665,14 @@
         this.repStartTime = 0;
       }
       
-      addSample(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, roll, pitch, yaw, accelMag, filteredZ, timestamp) {
+      addSample(accelX, accelY, accelZ, gyroX, gyroY, gyroZ, roll, pitch, yaw, qw, qx, qy, qz, accelMag, filteredZ, timestamp) {
         // Store complete sample data - rep number will be assigned retroactively when rep is detected
         const sample = {
           timestamp: timestamp,
           accelX, accelY, accelZ,
           gyroX, gyroY, gyroZ,
           roll, pitch, yaw,
+          qw, qx, qy, qz,
           accelMag: accelMag,
           sampleIndex: this.allSamples.length, // Track index for retroactive assignment
           repNumber: 0 // Will be assigned when rep boundaries are detected
@@ -840,6 +859,14 @@
         
         console.log(`✅ REP #${this.repCount} | Duration: ${duration.toFixed(2)}s | Range: ${Math.abs(peak.value - startValley.value).toFixed(2)} m/s²`);
         
+        // Compute Equipment ROM for this rep
+        if (typeof romComputer !== 'undefined') {
+          const repROM = romComputer.completeRep();
+          if (repROM) {
+            console.log(`📐 Rep #${this.repCount} ${romComputer.getROMLabel()}: ${repROM.romValue.toFixed(1)} ${repROM.unit}`);
+          }
+        }
+        
         // Store rep metadata with precise boundary information
         const repData = {
           repNumber: this.repCount,
@@ -954,6 +981,213 @@
     }
     
     const repCounter = new RepCounter();
+    
+    // ============ ROM COMPUTER ============
+    class ROMComputer {
+      constructor() {
+        this.exerciseType = 0;
+        this.baselineAngle = null;
+        this.primaryAxis = null;
+        this.repROMs = [];
+        this.currentRepData = [];
+        // Stroke ROM state
+        this.velocity = 0;
+        this.displacement = 0;
+        this.lastTimestamp = 0;
+        this.peakDisplacement = 0;
+        this.minDisplacement = 0;
+        this.lastFilteredAccelZ = 0;
+      }
+      
+      getROMType(exerciseCode) {
+        // 0,1 = dumbbell = angle ROM; 2,3,4,5 = barbell/weight stack = stroke ROM
+        return exerciseCode <= 1 ? 'angle' : 'stroke';
+      }
+      
+      setExercise(exerciseCode) {
+        this.exerciseType = exerciseCode;
+        this.reset();
+      }
+      
+      addSample(roll, pitch, yaw, qw, qx, qy, qz, accelX, accelY, accelZ, timestamp) {
+        const romType = this.getROMType(this.exerciseType);
+        if (romType === 'angle') {
+          this.addAngleSample(roll, pitch, yaw, timestamp);
+        } else {
+          this.addStrokeSample(qw, qx, qy, qz, accelX, accelY, accelZ, timestamp);
+        }
+      }
+      
+      addAngleSample(roll, pitch, yaw, timestamp) {
+        if (this.baselineAngle === null) {
+          this.baselineAngle = { roll, pitch, yaw };
+        }
+        this.currentRepData.push({
+          roll: roll - this.baselineAngle.roll,
+          pitch: pitch - this.baselineAngle.pitch,
+          yaw: yaw - this.baselineAngle.yaw,
+          timestamp
+        });
+      }
+      
+      addStrokeSample(qw, qx, qy, qz, accelX, accelY, accelZ, timestamp) {
+        // Remove gravity using quaternion rotation
+        // Gravity vector in sensor frame from quaternion
+        const gx = 2 * (qx * qz - qw * qy) * 9.81;
+        const gy = 2 * (qw * qx + qy * qz) * 9.81;
+        const gz = (qw * qw - qx * qx - qy * qy + qz * qz) * 9.81;
+        
+        // Linear acceleration (gravity removed)
+        const linX = accelX - gx;
+        const linY = accelY - gy;
+        const linZ = accelZ - gz;
+        
+        // Rotate linear acceleration to world frame using quaternion
+        const world = this.rotateByQuaternion(linX, linY, linZ, qw, qx, qy, qz);
+        
+        // Integrate vertical component (world Z) for 1D displacement
+        if (this.lastTimestamp > 0) {
+          const dt = (timestamp - this.lastTimestamp) / 1000;
+          if (dt > 0 && dt < 0.5) {
+            // Low-pass filter on acceleration (~5-10 Hz at 20Hz sampling)
+            const filteredAccelZ = world.z * 0.3 + this.lastFilteredAccelZ * 0.7;
+            this.lastFilteredAccelZ = filteredAccelZ;
+            
+            // Clamp small accelerations to reduce drift
+            const clampedAccel = Math.abs(filteredAccelZ) < 0.15 ? 0 : filteredAccelZ;
+            
+            this.velocity += clampedAccel * dt;
+            this.displacement += this.velocity * dt;
+            
+            this.peakDisplacement = Math.max(this.peakDisplacement, this.displacement);
+            this.minDisplacement = Math.min(this.minDisplacement, this.displacement);
+          }
+        }
+        this.lastTimestamp = timestamp;
+        
+        this.currentRepData.push({
+          displacement: this.displacement * 100, // cm
+          velocity: this.velocity,
+          timestamp
+        });
+      }
+      
+      rotateByQuaternion(x, y, z, qw, qx, qy, qz) {
+        const ix = qw * x + qy * z - qz * y;
+        const iy = qw * y + qz * x - qx * z;
+        const iz = qw * z + qx * y - qy * x;
+        const iw = -qx * x - qy * y - qz * z;
+        return {
+          x: ix * qw + iw * (-qx) + iy * (-qz) - iz * (-qy),
+          y: iy * qw + iw * (-qy) + iz * (-qx) - ix * (-qz),
+          z: iz * qw + iw * (-qz) + ix * (-qy) - iy * (-qx)
+        };
+      }
+      
+      completeRep() {
+        if (this.currentRepData.length < 3) return null;
+        
+        const romType = this.getROMType(this.exerciseType);
+        let romValue = 0;
+        
+        if (romType === 'angle') {
+          romValue = this.computeAngleROM();
+        } else {
+          romValue = this.computeStrokeROM();
+        }
+        
+        // Clamp unrealistic values
+        romValue = romType === 'angle' ? Math.min(romValue, 360) : Math.min(romValue, 200);
+        
+        const repROM = {
+          repIndex: this.repROMs.length + 1,
+          romValue: romValue,
+          romType: romType,
+          unit: romType === 'angle' ? 'deg' : 'cm'
+        };
+        this.repROMs.push(repROM);
+        
+        // Zero-velocity reset at rep boundary for stroke
+        if (romType === 'stroke') {
+          this.velocity = 0;
+          this.displacement = 0;
+          this.peakDisplacement = 0;
+          this.minDisplacement = 0;
+          this.lastFilteredAccelZ = 0;
+        }
+        this.currentRepData = [];
+        
+        return repROM;
+      }
+      
+      computeAngleROM() {
+        if (this.currentRepData.length < 3) return 0;
+        
+        // Auto-detect primary axis on first rep
+        if (this.primaryAxis === null) {
+          const ranges = {
+            roll: Math.max(...this.currentRepData.map(d => d.roll)) - Math.min(...this.currentRepData.map(d => d.roll)),
+            pitch: Math.max(...this.currentRepData.map(d => d.pitch)) - Math.min(...this.currentRepData.map(d => d.pitch)),
+            yaw: Math.max(...this.currentRepData.map(d => d.yaw)) - Math.min(...this.currentRepData.map(d => d.yaw))
+          };
+          this.primaryAxis = Object.entries(ranges).sort((a, b) => b[1] - a[1])[0][0];
+          console.log(`📐 ROM auto-detected primary axis: ${this.primaryAxis} (range: ${ranges[this.primaryAxis].toFixed(1)}°)`);
+        }
+        
+        const values = this.currentRepData.map(d => d[this.primaryAxis]);
+        return Math.max(...values) - Math.min(...values);
+      }
+      
+      computeStrokeROM() {
+        if (this.currentRepData.length < 3) return 0;
+        const displacements = this.currentRepData.map(d => d.displacement);
+        return Math.max(...displacements) - Math.min(...displacements);
+      }
+      
+      getSetStats() {
+        if (this.repROMs.length === 0) return null;
+        const values = this.repROMs.map(r => r.romValue);
+        const avg = values.reduce((a, b) => a + b, 0) / values.length;
+        const max = Math.max(...values);
+        const stdDev = Math.sqrt(values.reduce((sum, v) => sum + Math.pow(v - avg, 2), 0) / values.length);
+        const consistency = avg > 0 ? ((1 - stdDev / avg) * 100) : 100;
+        return {
+          avgROM: avg,
+          maxROM: max,
+          romConsistencyPercent: Math.max(0, Math.min(100, consistency)),
+          romType: this.getROMType(this.exerciseType),
+          unit: this.getROMType(this.exerciseType) === 'angle' ? 'deg' : 'cm',
+          repCount: this.repROMs.length
+        };
+      }
+      
+      getROMForRep(repNumber) {
+        const rom = this.repROMs.find(r => r.repIndex === repNumber);
+        return rom ? rom.romValue : 0;
+      }
+      
+      getROMLabel() {
+        const romType = this.getROMType(this.exerciseType);
+        if (romType === 'angle') return 'Equipment ROM';
+        if (this.exerciseType <= 3) return 'Bar Path ROM';
+        return 'Stroke Depth';
+      }
+      
+      reset() {
+        this.baselineAngle = null;
+        this.primaryAxis = null;
+        this.repROMs = [];
+        this.currentRepData = [];
+        this.velocity = 0;
+        this.displacement = 0;
+        this.lastTimestamp = 0;
+        this.peakDisplacement = 0;
+        this.minDisplacement = 0;
+        this.lastFilteredAccelZ = 0;
+      }
+    }
+    
+    const romComputer = new ROMComputer();
     
     // Sample counting for data rate calculation
     let sampleCount = 0;
@@ -1117,7 +1351,7 @@
     function handleIMUData(event) {
       const value = event.target.value;
       
-      // Parse the 40-byte data array
+      // Parse the 56-byte data array (with quaternions)
       const dataView = new DataView(value.buffer);
       
       const imuData = {
@@ -1130,7 +1364,11 @@
         roll: dataView.getFloat32(24, true),
         pitch: dataView.getFloat32(28, true),
         yaw: dataView.getFloat32(32, true),
-        timestamp: dataView.getUint32(36, true)
+        qw: dataView.getFloat32(36, true),
+        qx: dataView.getFloat32(40, true),
+        qy: dataView.getFloat32(44, true),
+        qz: dataView.getFloat32(48, true),
+        timestamp: dataView.getUint32(52, true)
       };
       
       // Calculate acceleration magnitude
@@ -1175,6 +1413,10 @@
           roll: imuData.roll,
           pitch: imuData.pitch,
           yaw: imuData.yaw,
+          qw: imuData.qw,
+          qx: imuData.qx,
+          qy: imuData.qy,
+          qz: imuData.qz,
           accelMag: accelMag,
           filteredX: filteredX,
           filteredY: filteredY,
@@ -1209,8 +1451,18 @@
           imuData.accelX, imuData.accelY, imuData.accelZ,
           imuData.gyroX, imuData.gyroY, imuData.gyroZ,
           imuData.roll, imuData.pitch, imuData.yaw,
+          imuData.qw, imuData.qx, imuData.qy, imuData.qz,
           filteredMag, filteredZ, relativeTime
         );
+        
+        // Feed ROM computer with orientation and acceleration data
+        romComputer.addSample(
+          imuData.roll, imuData.pitch, imuData.yaw,
+          imuData.qw, imuData.qx, imuData.qy, imuData.qz,
+          imuData.accelX, imuData.accelY, imuData.accelZ,
+          relativeTime
+        );
+        
         updateRepStats();
       }
       
@@ -1501,6 +1753,12 @@
       document.getElementById('pitch').textContent = data.pitch.toFixed(2);
       document.getElementById('yaw').textContent = data.yaw.toFixed(2);
       
+      // Update quaternion
+      document.getElementById('quat-w').textContent = data.qw.toFixed(4);
+      document.getElementById('quat-x').textContent = data.qx.toFixed(4);
+      document.getElementById('quat-y').textContent = data.qy.toFixed(4);
+      document.getElementById('quat-z').textContent = data.qz.toFixed(4);
+      
       // Update current roll for calibration
       currentRoll = data.roll;
     }
@@ -1550,10 +1808,30 @@
           document.getElementById('total-time').textContent = (lastTimestamp / 1000).toFixed(1);
         }
       }
+      
+      // Update Equipment ROM display
+      if (typeof romComputer !== 'undefined') {
+        const romType = romComputer.getROMType(selectedExercise);
+        const unit = romType === 'angle' ? '°' : ' cm';
+        document.getElementById('rom-type').textContent = romComputer.getROMLabel();
+        
+        if (romComputer.repROMs.length > 0) {
+          const lastROM = romComputer.repROMs[romComputer.repROMs.length - 1];
+          document.getElementById('rom-last-rep').textContent = lastROM.romValue.toFixed(1) + unit;
+          
+          const stats = romComputer.getSetStats();
+          if (stats) {
+            document.getElementById('rom-avg').textContent = stats.avgROM.toFixed(1) + unit;
+            document.getElementById('rom-max').textContent = stats.maxROM.toFixed(1) + unit;
+            document.getElementById('rom-consistency').textContent = stats.romConsistencyPercent.toFixed(0) + '%';
+          }
+        }
+      }
     }
     
     function resetRepCount() {
       repCounter.reset();
+      romComputer.reset();
       rawDataLog = [];
       recordingStartTime = 0;
       document.getElementById('rep-count').textContent = '0';
@@ -1569,6 +1847,11 @@
       document.getElementById('total-time').textContent = '--';
       document.getElementById('rep-status').textContent = 'Reset';
       document.getElementById('rep-status').className = 'status idle';
+      document.getElementById('rom-type').textContent = '--';
+      document.getElementById('rom-last-rep').textContent = '--';
+      document.getElementById('rom-avg').textContent = '--';
+      document.getElementById('rom-max').textContent = '--';
+      document.getElementById('rom-consistency').textContent = '--';
       console.log('🔄 Rep counter reset');
     }
     
@@ -1699,6 +1982,14 @@
           roll: logEntry.roll.toFixed(2),
           pitch: logEntry.pitch.toFixed(2),
           yaw: logEntry.yaw.toFixed(2),
+          qw: logEntry.qw.toFixed(6),
+          qx: logEntry.qx.toFixed(6),
+          qy: logEntry.qy.toFixed(6),
+          qz: logEntry.qz.toFixed(6),
+          romValue: romComputer.getROMForRep(repNumber).toFixed(2),
+          romType: romComputer.getROMType(selectedExercise),
+          romUnit: romComputer.getROMType(selectedExercise) === 'angle' ? 'deg' : 'cm',
+          romLabel: romComputer.getROMLabel(),
           filteredX: logEntry.filteredX.toFixed(4),
           filteredY: logEntry.filteredY.toFixed(4),
           filteredZ: logEntry.filteredZ.toFixed(4),
@@ -1882,6 +2173,8 @@
         recordingStartTime = 0; // Will be set on first sample
         rawDataLog = [];
         repCounter.reset();
+        romComputer.reset();
+        romComputer.setExercise(selectedExercise);
         
         button.disabled = false;
         button.textContent = '⏹️ Stop Recording';
@@ -1932,6 +2225,7 @@
         const selectedOption = this.options[this.selectedIndex];
         selectedEquipment = parseInt(selectedOption.dataset.equipment);
         equipmentSelect.value = selectedEquipment;
+        romComputer.setExercise(selectedExercise);
         updateQualityOptions();
         updateExerciseDisplay();
         updateChartLabels();
