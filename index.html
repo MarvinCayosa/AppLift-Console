@@ -340,6 +340,8 @@
         <button onclick="toggleRecording()">▶️ Start Recording</button>
         <button onclick="startNFCLatencyTest()" style="background-color: #17a2b8;">⚡ NFC Latency Test</button>
         <button onclick="window.location.href='smartphone_imu_test.html'" style="background-color: #6f42c1;">📱 Phone IMU Test</button>
+        <button onclick="openROMTestModal()" style="background-color: #e67e22;">📐 ROM Test</button>
+        <button onclick="window.location.href='vertical_rom_test.html'" style="background-color: #d35400;">📏 Vertical ROM Test</button>
       </div>
       
       <div class="target-reps-container">
@@ -986,21 +988,61 @@
     class ROMComputer {
       constructor() {
         this.exerciseType = 0;
-        this.baselineAngle = null;
-        this.primaryAxis = null;
         this.repROMs = [];
         this.currentRepData = [];
-        // Stroke ROM state
+        
+        // Angle ROM state (quaternion-based)
+        this.baselineQuat = null;       // {w,x,y,z} at neutral
+        this.primaryAxis = null;        // auto-detected: 'roll','pitch','yaw'
+        this.baselineAngle = null;      // Euler baseline
+        
+        // Stroke ROM state — quaternion gravity removal + trapezoidal integration + ZUPT
         this.velocity = 0;
         this.displacement = 0;
         this.lastTimestamp = 0;
         this.peakDisplacement = 0;
         this.minDisplacement = 0;
-        this.lastFilteredAccelZ = 0;
+        this.baselineGravity = null;    // calibrated gravity vector {x,y,z} from baseline hold
+        this.gravityMag = 9.81;         // calibrated gravity magnitude
+        this.gyroBias = {x:0,y:0,z:0}; // calibrated gyro offset (native units)
+        this.gyroInRadians = false;     // auto-detected: true if ESP32 outputs rad/s
+        this.stillCounter = 0;          // consecutive near-zero samples
+        this.NOISE_FLOOR = 0.08;        // m/s² — acceleration dead-zone
+        this.ZUPT_THRESHOLD = 0.15;     // m/s² — accel rest detection
+        this.GYRO_STILL_RAD = 0.05;     // rad/s — gyro rest detection (~2.9°/s)
+        this.ZUPT_SAMPLES = 3;          // consecutive still samples to trigger ZUPT
+        this.ZUPT_DECAY = 0.08;         // aggressive velocity decay at rest
+        this.MAX_DISPLACEMENT = 2.0;    // meters (200 cm) — hard clamp for safety
+        this.DEG2RAD = Math.PI / 180;
+        
+        // Target ROM & Calibration
+        this.targetROM = null;          // target ROM from calibration rep (degrees or cm)
+        this.isCalibrationRep = false;  // true during calibration rep
+        this.romCalibrated = false;     // true after target ROM is set
+        
+        // Within-rep tracking (position-independent: max - min within the rep)
+        this.repMinAngle = Infinity;    // tracks min angle within current rep
+        this.repMaxAngle = -Infinity;   // tracks max angle within current rep
+        
+        // Auto rep detection for ROM test modal
+        this.autoRepEnabled = false;        // set true when ROM test modal is open
+        this.repPhase = 'idle';             // 'idle' -> 'rising' -> 'peaked' -> complete
+        this.repPeakValue = 0;              // peak trackValue within this rep
+        this.repSampleCount = 0;            // samples in current rep
+        this.MIN_REP_SAMPLES = 10;          // minimum samples for a valid rep (~0.5s)
+        this.REP_RETURN_THRESHOLD = 0.4;    // must return to within 40% of peak ROM to complete rep
+        
+        // Live tracking for ROM test modal
+        this.liveAngleDeg = 0;          // current angle from baseline (degrees)
+        this.liveDisplacementCm = 0;    // current displacement (cm)
+        this.liveVelocity = 0;
+        this.liveFulfillment = 0;       // current rep ROM / targetROM * 100
+        this.liveRepROM = 0;            // current rep ROM (max-min so far)
+        this.sampleHistory = [];        // last N samples for live chart
+        this.maxHistorySize = 200;      // ~10s at 20Hz
       }
       
       getROMType(exerciseCode) {
-        // 0,1 = dumbbell = angle ROM; 2,3,4,5 = barbell/weight stack = stroke ROM
         return exerciseCode <= 1 ? 'angle' : 'stroke';
       }
       
@@ -1009,81 +1051,318 @@
         this.reset();
       }
       
-      addSample(roll, pitch, yaw, qw, qx, qy, qz, accelX, accelY, accelZ, timestamp) {
-        const romType = this.getROMType(this.exerciseType);
-        if (romType === 'angle') {
-          this.addAngleSample(roll, pitch, yaw, timestamp);
-        } else {
-          this.addStrokeSample(qw, qx, qy, qz, accelX, accelY, accelZ, timestamp);
-        }
+      // ---- Quaternion math helpers ----
+      quatConjugate(q) {
+        return { w: q.w, x: -q.x, y: -q.y, z: -q.z };
       }
       
-      addAngleSample(roll, pitch, yaw, timestamp) {
-        if (this.baselineAngle === null) {
-          this.baselineAngle = { roll, pitch, yaw };
-        }
-        this.currentRepData.push({
-          roll: roll - this.baselineAngle.roll,
-          pitch: pitch - this.baselineAngle.pitch,
-          yaw: yaw - this.baselineAngle.yaw,
-          timestamp
-        });
-      }
-      
-      addStrokeSample(qw, qx, qy, qz, accelX, accelY, accelZ, timestamp) {
-        // Remove gravity using quaternion rotation
-        // Gravity vector in sensor frame from quaternion
-        const gx = 2 * (qx * qz - qw * qy) * 9.81;
-        const gy = 2 * (qw * qx + qy * qz) * 9.81;
-        const gz = (qw * qw - qx * qx - qy * qy + qz * qz) * 9.81;
-        
-        // Linear acceleration (gravity removed)
-        const linX = accelX - gx;
-        const linY = accelY - gy;
-        const linZ = accelZ - gz;
-        
-        // Rotate linear acceleration to world frame using quaternion
-        const world = this.rotateByQuaternion(linX, linY, linZ, qw, qx, qy, qz);
-        
-        // Integrate vertical component (world Z) for 1D displacement
-        if (this.lastTimestamp > 0) {
-          const dt = (timestamp - this.lastTimestamp) / 1000;
-          if (dt > 0 && dt < 0.5) {
-            // Low-pass filter on acceleration (~5-10 Hz at 20Hz sampling)
-            const filteredAccelZ = world.z * 0.3 + this.lastFilteredAccelZ * 0.7;
-            this.lastFilteredAccelZ = filteredAccelZ;
-            
-            // Clamp small accelerations to reduce drift
-            const clampedAccel = Math.abs(filteredAccelZ) < 0.15 ? 0 : filteredAccelZ;
-            
-            this.velocity += clampedAccel * dt;
-            this.displacement += this.velocity * dt;
-            
-            this.peakDisplacement = Math.max(this.peakDisplacement, this.displacement);
-            this.minDisplacement = Math.min(this.minDisplacement, this.displacement);
-          }
-        }
-        this.lastTimestamp = timestamp;
-        
-        this.currentRepData.push({
-          displacement: this.displacement * 100, // cm
-          velocity: this.velocity,
-          timestamp
-        });
-      }
-      
-      rotateByQuaternion(x, y, z, qw, qx, qy, qz) {
-        const ix = qw * x + qy * z - qz * y;
-        const iy = qw * y + qz * x - qx * z;
-        const iz = qw * z + qx * y - qy * x;
-        const iw = -qx * x - qy * y - qz * z;
+      quatMultiply(a, b) {
         return {
-          x: ix * qw + iw * (-qx) + iy * (-qz) - iz * (-qy),
-          y: iy * qw + iw * (-qy) + iz * (-qx) - ix * (-qz),
-          z: iz * qw + iw * (-qz) + ix * (-qy) - iy * (-qx)
+          w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
+          x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+          y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+          z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w
         };
       }
       
+      quatToEuler(q) {
+        // Returns {roll, pitch, yaw} in degrees
+        const sinr = 2 * (q.w * q.x + q.y * q.z);
+        const cosr = 1 - 2 * (q.x * q.x + q.y * q.y);
+        const roll = Math.atan2(sinr, cosr) * (180 / Math.PI);
+        
+        let pitch;
+        const sinp = 2 * (q.w * q.y - q.z * q.x);
+        if (Math.abs(sinp) >= 1) {
+          pitch = Math.sign(sinp) * 90;
+        } else {
+          pitch = Math.asin(sinp) * (180 / Math.PI);
+        }
+        
+        const siny = 2 * (q.w * q.z + q.x * q.y);
+        const cosy = 1 - 2 * (q.y * q.y + q.z * q.z);
+        const yaw = Math.atan2(siny, cosy) * (180 / Math.PI);
+        
+        return { roll, pitch, yaw };
+      }
+      
+      // Angle between two quaternions in degrees
+      quatAngleDeg(q1, q2) {
+        const dot = q1.w*q2.w + q1.x*q2.x + q1.y*q2.y + q1.z*q2.z;
+        const clamped = Math.min(1, Math.max(-1, Math.abs(dot)));
+        return 2 * Math.acos(clamped) * (180 / Math.PI);
+      }
+      
+      rotateVector(v, q) {
+        const p = { w: 0, x: v.x, y: v.y, z: v.z };
+        const r = this.quatMultiply(this.quatMultiply(q, p), this.quatConjugate(q));
+        return { x: r.x, y: r.y, z: r.z };
+      }
+      
+      // ---- Main sample entry ----
+      addSample(roll, pitch, yaw, qw, qx, qy, qz, accelX, accelY, accelZ, gyroX, gyroY, gyroZ, timestamp) {
+        const romType = this.getROMType(this.exerciseType);
+        const q = { w: qw, x: qx, y: qy, z: qz };
+        
+        if (romType === 'angle') {
+          this.addAngleSample(roll, pitch, yaw, q, timestamp);
+        } else {
+          this.addStrokeSample(q, accelX, accelY, accelZ, gyroX || 0, gyroY || 0, gyroZ || 0, timestamp);
+        }
+      }
+      
+      // ---- ANGLE ROM (Quaternion-based) ----
+      addAngleSample(roll, pitch, yaw, q, timestamp) {
+        // Set baseline on first sample (auto)
+        if (this.baselineQuat === null) {
+          this.baselineQuat = { ...q };
+          this.baselineAngle = { roll, pitch, yaw };
+        }
+        
+        // Compute relative quaternion: q_rel = q_baseline^-1 * q_current
+        const qRel = this.quatMultiply(this.quatConjugate(this.baselineQuat), q);
+        
+        // Total angular displacement from baseline (single scalar, degrees)
+        this.liveAngleDeg = this.quatAngleDeg(this.baselineQuat, q);
+        
+        // Also compute per-axis delta for auto-axis detection
+        const deltaRoll = roll - this.baselineAngle.roll;
+        const deltaPitch = pitch - this.baselineAngle.pitch;
+        const deltaYaw = yaw - this.baselineAngle.yaw;
+        
+        // Track within-rep range (for position-independent ROM)
+        // Use primary axis if known, else use total angle
+        let trackValue = this.liveAngleDeg;
+        if (this.primaryAxis) {
+          const axisMap = { roll: deltaRoll, pitch: deltaPitch, yaw: deltaYaw };
+          trackValue = axisMap[this.primaryAxis];
+        }
+        this.repMinAngle = Math.min(this.repMinAngle, trackValue);
+        this.repMaxAngle = Math.max(this.repMaxAngle, trackValue);
+        this.liveRepROM = this.repMaxAngle - this.repMinAngle;
+        
+        // Update fulfillment
+        if (this.targetROM && this.targetROM > 0) {
+          this.liveFulfillment = Math.min(150, (this.liveRepROM / this.targetROM) * 100);
+        }
+        
+        this.currentRepData.push({
+          roll: deltaRoll,
+          pitch: deltaPitch,
+          yaw: deltaYaw,
+          totalAngle: this.liveAngleDeg,
+          timestamp
+        });
+        
+        // Update live chart history
+        this.sampleHistory.push({ t: timestamp, v: this.liveRepROM });
+        if (this.sampleHistory.length > this.maxHistorySize) this.sampleHistory.shift();
+      }
+      
+      // ---- STROKE ROM (vertical displacement via quaternion gravity removal) ----
+      // Improved approach using ESP32's onboard quaternion:
+      // 1. Rotate measured accel to world frame using quaternion
+      // 2. Subtract calibrated gravity magnitude from world-Z
+      // 3. ZUPT when still (combined accel+gyro detection)
+      // 4. Trapezoidal integration: accel → velocity → displacement
+      addStrokeSample(q, accelX, accelY, accelZ, gyroX, gyroY, gyroZ, timestamp) {
+        // === First sample: initialize gravity magnitude ===
+        if (this.baselineGravity === null) {
+          this.baselineGravity = { x: accelX, y: accelY, z: accelZ };
+          this.gravityMag = Math.sqrt(accelX*accelX + accelY*accelY + accelZ*accelZ);
+          this.lastTimestamp = timestamp;
+          console.log(`🔍 [ROM] Gravity mag=${this.gravityMag.toFixed(4)} from first sample`);
+          return;
+        }
+        
+        if (this.lastTimestamp === 0) { this.lastTimestamp = timestamp; return; }
+        const dt = (timestamp - this.lastTimestamp) / 1000;
+        if (dt <= 0 || dt >= 0.5) { this.lastTimestamp = timestamp; return; }
+        this.lastTimestamp = timestamp;
+        
+        // === STEP 1: Quaternion-based gravity removal ===
+        // Rotate measured accel from sensor frame to world frame
+        const accelWorld = this.rotateVector({ x: accelX, y: accelY, z: accelZ }, q);
+        // Vertical linear acceleration = world-Z minus calibrated gravity
+        const vertAccel = accelWorld.z - this.gravityMag;
+        
+        // === STEP 2: Dead-zone (sensor noise) ===
+        const accelInput = Math.abs(vertAccel) < this.NOISE_FLOOR ? 0 : vertAccel;
+        
+        // === STEP 3: ZUPT — combined accel + gyro stillness detection ===
+        const accelMagDev = Math.abs(Math.sqrt(accelX*accelX+accelY*accelY+accelZ*accelZ) - this.gravityMag);
+        const gyroMagRaw = Math.sqrt(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
+        const gyroMagRad = this.gyroInRadians ? gyroMagRaw : gyroMagRaw * this.DEG2RAD;
+        const isStill = accelMagDev < this.ZUPT_THRESHOLD && gyroMagRad < this.GYRO_STILL_RAD;
+        
+        if (isStill) {
+          this.stillCounter++;
+        } else {
+          this.stillCounter = 0;
+        }
+        
+        if (this.stillCounter >= this.ZUPT_SAMPLES) {
+          this.velocity *= this.ZUPT_DECAY;
+          if (Math.abs(this.velocity) < 0.001) this.velocity = 0;
+        }
+        
+        // === STEP 4: Trapezoidal integration ===
+        const newVelocity = this.velocity + accelInput * dt;
+        this.displacement += (this.velocity + newVelocity) / 2 * dt;
+        this.velocity = newVelocity;
+        
+        this.displacement = Math.max(-this.MAX_DISPLACEMENT, Math.min(this.MAX_DISPLACEMENT, this.displacement));
+        
+        this.peakDisplacement = Math.max(this.peakDisplacement, this.displacement);
+        this.minDisplacement = Math.min(this.minDisplacement, this.displacement);
+        
+        this.liveDisplacementCm = this.displacement * 100;
+        this.liveVelocity = this.velocity;
+        
+        // Track within-rep displacement range
+        this.repMinAngle = Math.min(this.repMinAngle, this.liveDisplacementCm);
+        this.repMaxAngle = Math.max(this.repMaxAngle, this.liveDisplacementCm);
+        this.liveRepROM = this.repMaxAngle - this.repMinAngle;
+        
+        // Update fulfillment
+        if (this.targetROM && this.targetROM > 0) {
+          this.liveFulfillment = Math.min(150, (this.liveRepROM / this.targetROM) * 100);
+        }
+        
+        // Auto rep detection (for ROM test modal)
+        if (this.autoRepEnabled && !this.isCalibrationRep) {
+          this.repSampleCount++;
+          this._detectRepBoundary(this.liveRepROM);
+        }
+        
+        this.currentRepData.push({
+          displacement: this.liveDisplacementCm,
+          velocity: this.velocity,
+          timestamp
+        });
+        
+        // Update live chart history
+        this.sampleHistory.push({ t: timestamp, v: this.liveRepROM });
+        if (this.sampleHistory.length > this.maxHistorySize) this.sampleHistory.shift();
+      }
+      
+      // ---- Auto rep boundary detection ----
+      // Detects when ROM rises significantly then returns near starting position
+      _detectRepBoundary(currentRepROM) {
+        const minROMForRep = this.targetROM ? this.targetROM * 0.3 : 15; // at least 30% of target or 15°/cm
+        
+        if (this.repPhase === 'idle') {
+          // Start tracking when ROM exceeds minimum threshold
+          if (currentRepROM > minROMForRep) {
+            this.repPhase = 'rising';
+            this.repPeakValue = currentRepROM;
+          }
+        } else if (this.repPhase === 'rising') {
+          // Track peak
+          if (currentRepROM > this.repPeakValue) {
+            this.repPeakValue = currentRepROM;
+          }
+          // Check if we've started returning (dropped from peak)
+          if (currentRepROM < this.repPeakValue * 0.85 && this.repPeakValue > minROMForRep) {
+            this.repPhase = 'returning';
+          }
+        } else if (this.repPhase === 'returning') {
+          // Track if peak increases again (not yet returning)
+          if (currentRepROM > this.repPeakValue) {
+            this.repPeakValue = currentRepROM;
+            this.repPhase = 'rising';
+            return;
+          }
+          // Check if returned enough to call it a rep
+          // Use current position relative to baseline (not repROM, which never decreases):
+          //   - Angle ROM: liveAngleDeg = current angle from baseline
+          //   - Stroke ROM: liveDisplacementCm = current vertical displacement
+          const romType = this.getROMType(this.exerciseType);
+          let currentPos;
+          if (romType === 'angle') {
+            currentPos = this.liveAngleDeg;
+          } else {
+            currentPos = Math.abs(this.liveDisplacementCm);
+          }
+          const atRest = currentPos < this.repPeakValue * this.REP_RETURN_THRESHOLD;
+          
+          if (atRest && this.repSampleCount >= this.MIN_REP_SAMPLES) {
+            // Rep complete!
+            this.completeRep();
+            this.repPhase = 'idle';
+            this.repPeakValue = 0;
+            this.repSampleCount = 0;
+            console.log(`\u{1F4AA} Auto-detected rep #${this.repROMs.length}`);
+          }
+        }
+      }
+      
+      // ---- Start calibration rep ----
+      startCalibrationRep() {
+        this.isCalibrationRep = true;
+        this.currentRepData = [];
+        this.repMinAngle = Infinity;
+        this.repMaxAngle = -Infinity;
+        this.liveRepROM = 0;
+        this.liveFulfillment = 0;
+        // Reset stroke state for clean integration
+        this.velocity = 0;
+        this.displacement = 0;
+        this.stillCounter = 0;
+        this.peakDisplacement = 0;
+        this.minDisplacement = 0;
+        console.log('🎯 ROM calibration rep started — do one full-range rep!');
+      }
+      
+      // ---- Finish calibration rep ----
+      finishCalibrationRep() {
+        if (this.currentRepData.length < 5) {
+          console.log('⚠️ Not enough data for calibration rep');
+          this.isCalibrationRep = false;
+          return null;
+        }
+        
+        const romType = this.getROMType(this.exerciseType);
+        let romValue;
+        
+        if (romType === 'angle') {
+          romValue = this.computeAngleROM();
+        } else {
+          romValue = this.computeStrokeROM();
+        }
+        
+        // Also use within-rep tracking as alternative
+        const repRangeROM = this.repMaxAngle - this.repMinAngle;
+        romValue = Math.max(romValue, repRangeROM);
+        
+        // Clamp
+        romValue = romType === 'angle' ? Math.min(romValue, 360) : Math.min(romValue, 300);
+        
+        this.targetROM = romValue;
+        this.romCalibrated = true;
+        this.isCalibrationRep = false;
+        
+        // Reset for normal tracking
+        this.currentRepData = [];
+        this.repMinAngle = Infinity;
+        this.repMaxAngle = -Infinity;
+        this.liveRepROM = 0;
+        
+        // Reset stroke state
+        if (romType === 'stroke') {
+          this.velocity = 0;
+          this.displacement = 0;
+          this.stillCounter = 0;
+          this.peakDisplacement = 0;
+          this.minDisplacement = 0;
+        }
+        
+        const unit = romType === 'angle' ? '°' : ' cm';
+        console.log(`✅ ROM target set: ${this.targetROM.toFixed(1)}${unit}`);
+        return this.targetROM;
+      }
+      
+      // ---- Rep completion ----
       completeRep() {
         if (this.currentRepData.length < 3) return null;
         
@@ -1103,7 +1382,8 @@
           repIndex: this.repROMs.length + 1,
           romValue: romValue,
           romType: romType,
-          unit: romType === 'angle' ? 'deg' : 'cm'
+          unit: romType === 'angle' ? 'deg' : 'cm',
+          fulfillment: this.targetROM ? Math.min(150, (romValue / this.targetROM) * 100) : null
         };
         this.repROMs.push(repROM);
         
@@ -1113,9 +1393,13 @@
           this.displacement = 0;
           this.peakDisplacement = 0;
           this.minDisplacement = 0;
-          this.lastFilteredAccelZ = 0;
+          this.stillCounter = 0;
         }
         this.currentRepData = [];
+        this.repMinAngle = Infinity;
+        this.repMaxAngle = -Infinity;
+        this.liveRepROM = 0;
+        this.liveFulfillment = 0;
         
         return repROM;
       }
@@ -1123,7 +1407,11 @@
       computeAngleROM() {
         if (this.currentRepData.length < 3) return 0;
         
-        // Auto-detect primary axis on first rep
+        // Option 1: Use total quaternion angular displacement
+        const totalAngles = this.currentRepData.map(d => d.totalAngle);
+        const quatROM = Math.max(...totalAngles) - Math.min(...totalAngles);
+        
+        // Option 2: Auto-detect primary Euler axis (for single-axis exercises)
         if (this.primaryAxis === null) {
           const ranges = {
             roll: Math.max(...this.currentRepData.map(d => d.roll)) - Math.min(...this.currentRepData.map(d => d.roll)),
@@ -1134,14 +1422,17 @@
           console.log(`📐 ROM auto-detected primary axis: ${this.primaryAxis} (range: ${ranges[this.primaryAxis].toFixed(1)}°)`);
         }
         
-        const values = this.currentRepData.map(d => d[this.primaryAxis]);
-        return Math.max(...values) - Math.min(...values);
+        const axisValues = this.currentRepData.map(d => d[this.primaryAxis]);
+        const axisROM = Math.max(...axisValues) - Math.min(...axisValues);
+        
+        // Use the larger of quaternion total or primary-axis ROM
+        return Math.max(quatROM, axisROM);
       }
       
       computeStrokeROM() {
         if (this.currentRepData.length < 3) return 0;
-        const displacements = this.currentRepData.map(d => d.displacement);
-        return Math.max(...displacements) - Math.min(...displacements);
+        const disp = this.currentRepData.map(d => d.displacement);
+        return Math.max(...disp) - Math.min(...disp);
       }
       
       getSetStats() {
@@ -1151,13 +1442,20 @@
         const max = Math.max(...values);
         const stdDev = Math.sqrt(values.reduce((sum, v) => sum + Math.pow(v - avg, 2), 0) / values.length);
         const consistency = avg > 0 ? ((1 - stdDev / avg) * 100) : 100;
+        
+        // Average fulfillment
+        const fulfillments = this.repROMs.filter(r => r.fulfillment !== null).map(r => r.fulfillment);
+        const avgFulfillment = fulfillments.length > 0 ? fulfillments.reduce((a, b) => a + b, 0) / fulfillments.length : null;
+        
         return {
           avgROM: avg,
           maxROM: max,
           romConsistencyPercent: Math.max(0, Math.min(100, consistency)),
           romType: this.getROMType(this.exerciseType),
           unit: this.getROMType(this.exerciseType) === 'angle' ? 'deg' : 'cm',
-          repCount: this.repROMs.length
+          repCount: this.repROMs.length,
+          targetROM: this.targetROM,
+          avgFulfillment: avgFulfillment
         };
       }
       
@@ -1173,8 +1471,37 @@
         return 'Stroke Depth';
       }
       
-      reset() {
+      calibrateBaseline() {
+        // Call this to reset baseline to current position
+        this.baselineQuat = null;
         this.baselineAngle = null;
+        this.baselineGravity = null;
+        this.gravityMag = 9.81;
+        this.gyroBias = {x:0,y:0,z:0};
+        this.gyroInRadians = false;
+        this.currentRepData = [];
+        this.sampleHistory = [];
+        this.velocity = 0;
+        this.displacement = 0;
+        this.stillCounter = 0;
+        this.peakDisplacement = 0;
+        this.minDisplacement = 0;
+        this.liveAngleDeg = 0;
+        this.liveDisplacementCm = 0;
+        this.repMinAngle = Infinity;
+        this.repMaxAngle = -Infinity;
+        this.liveRepROM = 0;
+        this.liveFulfillment = 0;
+        console.log('📐 ROM baseline recalibrated to current position');
+      }
+      
+      reset() {
+        this.baselineQuat = null;
+        this.baselineAngle = null;
+        this.baselineGravity = null;
+        this.gravityMag = 9.81;
+        this.gyroBias = {x:0,y:0,z:0};
+        this.gyroInRadians = false;
         this.primaryAxis = null;
         this.repROMs = [];
         this.currentRepData = [];
@@ -1183,11 +1510,522 @@
         this.lastTimestamp = 0;
         this.peakDisplacement = 0;
         this.minDisplacement = 0;
-        this.lastFilteredAccelZ = 0;
+        this.stillCounter = 0;
+        this.liveAngleDeg = 0;
+        this.liveDisplacementCm = 0;
+        this.liveVelocity = 0;
+        this.sampleHistory = [];
+        this.targetROM = null;
+        this.isCalibrationRep = false;
+        this.romCalibrated = false;
+        this.repMinAngle = Infinity;
+        this.repMaxAngle = -Infinity;
+        this.liveRepROM = 0;
+        this.liveFulfillment = 0;
+        this.autoRepEnabled = false;
+        this.repPhase = 'idle';
+        this.repPeakValue = 0;
+        this.repSampleCount = 0;
       }
     }
     
     const romComputer = new ROMComputer();
+    
+    // ============ ROM TEST MODAL ============
+    let romTestActive = false;
+    let romTestChart = null;
+    let romTestChartData = { labels: [], values: [] };
+    let romTestUpdateInterval = null;
+    let romCalibrating = false;
+    let romCalibSamples = [];  // collected {qw,qx,qy,qz,roll,pitch,yaw} during calibration
+    let romCalibStartTime = 0;
+    const ROM_CALIB_DURATION = 3000; // 3 seconds
+    
+    function openROMTestModal() {
+      if (!device || !device.gatt.connected) {
+        alert('Please connect to the ESP32 IMU first!');
+        return;
+      }
+      
+      romTestActive = true;
+      romComputer.reset();
+      romComputer.setExercise(selectedExercise);
+      romComputer.autoRepEnabled = true;
+      
+      const romType = romComputer.getROMType(selectedExercise);
+      const unit = romType === 'angle' ? '°' : ' cm';
+      const label = romComputer.getROMLabel();
+      const exerciseName = EXERCISE_MAPPING[selectedExercise];
+      const equipName = EQUIPMENT_MAPPING[selectedEquipment];
+      
+      const overlay = document.createElement('div');
+      overlay.id = 'rom-test-overlay';
+      overlay.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: #1a1a2e; color: white; z-index: 10000;
+        display: flex; flex-direction: column; overflow: auto;
+      `;
+      
+      overlay.innerHTML = `
+        <div style="padding: 15px; max-width: 900px; margin: 0 auto; width: 100%;">
+          <!-- Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <h2 style="margin: 0; color: #e67e22; font-size: clamp(18px, 5vw, 24px);">📐 ROM Test Mode</h2>
+              <p style="margin: 4px 0 0 0; color: #aaa; font-size: 13px;">${equipName} — ${exerciseName} — ${label}</p>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button id="rom-calib-rep-btn" onclick="romTestStartCalibRep()" style="background: #3498db; padding: 10px 16px; font-size: 13px; border: none; border-radius: 8px; color: white; cursor: pointer; min-height: 38px;">🎯 Calibrate (do 1 rep)</button>
+              <button onclick="romTestCalibrate()" style="background: #27ae60; padding: 10px 16px; font-size: 13px; border: none; border-radius: 8px; color: white; cursor: pointer; min-height: 38px;">📌 Set Baseline</button>
+              <button onclick="closeROMTestModal()" style="background: #e74c3c; padding: 10px 16px; font-size: 13px; border: none; border-radius: 8px; color: white; cursor: pointer; min-height: 38px;">✖ Close</button>
+            </div>
+          </div>
+          
+          <!-- Live Value -->
+          <div style="background: linear-gradient(135deg, #e67e22 0%, #d35400 100%); border-radius: 15px; padding: 20px; text-align: center; margin-bottom: 12px;">
+            <div style="font-size: 13px; opacity: 0.9; margin-bottom: 4px;">Live Rep ROM (max − min within rep)</div>
+            <div id="rom-test-live" style="font-size: clamp(40px, 10vw, 60px); font-weight: bold; line-height: 1;">
+              0.0<span style="font-size: 0.4em;">${unit}</span>
+            </div>
+            <!-- Fulfillment bar -->
+            <div id="rom-test-fulfillment-container" style="margin-top: 12px; display: none;">
+              <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+                <span>ROM Fulfillment</span>
+                <span id="rom-test-fulfillment-pct">0%</span>
+              </div>
+              <div style="background: rgba(0,0,0,0.3); border-radius: 8px; height: 18px; overflow: hidden;">
+                <div id="rom-test-fulfillment-bar" style="height: 100%; width: 0%; border-radius: 8px; transition: width 0.2s, background 0.3s; background: #e74c3c;"></div>
+              </div>
+              <div style="font-size: 11px; opacity: 0.7; margin-top: 4px;">Target: <span id="rom-test-target-val">--</span></div>
+            </div>
+            <div id="rom-test-calib-status" style="margin-top: 8px; font-size: 13px; color: #ffeaa7;">
+              ⚠️ Not calibrated — press "🎯 Calibrate" and do 1 full-range rep
+            </div>
+            <div style="display: flex; justify-content: center; gap: 30px; margin-top: 10px; font-size: 13px;">
+              <span>Angle: <span id="rom-test-quat" style="color: #ffeaa7;">--</span></span>
+              <span>Norm: <span id="rom-test-norm" style="color: #ffeaa7;">--</span></span>
+              ${romType === 'stroke' ? '<span>Vel: <span id="rom-test-vel" style="color: #ffeaa7;">0</span> cm/s</span>' : ''}
+            </div>
+          </div>
+          
+          <!-- Chart -->
+          <div style="background: rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; margin-bottom: 12px;">
+            <canvas id="rom-test-chart" style="width: 100%; height: 200px;"></canvas>
+          </div>
+          
+          <!-- Per-Rep Table + Set Stats -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div style="background: rgba(255,255,255,0.05); border-radius: 12px; padding: 15px;">
+              <h3 style="margin: 0 0 10px 0; color: #e67e22; font-size: 15px;">📊 Per-Rep ROM</h3>
+              <div id="rom-test-rep-table" style="font-size: 13px; max-height: 200px; overflow-y: auto;">
+                <p style="color: #888;">No reps detected yet. Start exercising!</p>
+              </div>
+            </div>
+            <div style="background: rgba(255,255,255,0.05); border-radius: 12px; padding: 15px;">
+              <h3 style="margin: 0 0 10px 0; color: #e67e22; font-size: 15px;">📈 Set Statistics</h3>
+              <div id="rom-test-stats" style="font-size: 14px;">
+                <p>Avg ROM: <span style="color: #e67e22; font-weight: bold;">--</span></p>
+                <p>Max ROM: <span style="color: #e67e22; font-weight: bold;">--</span></p>
+                <p>Consistency: <span style="color: #e67e22; font-weight: bold;">--</span></p>
+                <p>Reps: <span style="color: #e67e22; font-weight: bold;">0</span></p>
+              </div>
+              <h3 style="margin: 15px 0 8px 0; color: #3498db; font-size: 15px;">🎯 Exercise Info</h3>
+              <div style="font-size: 12px; color: #aaa; line-height: 1.8;">
+                <p>ROM Type: <strong style="color: white;">${romType === 'angle' ? 'ANGLE ROM' : 'STROKE ROM'}</strong></p>
+                <p>Unit: <strong style="color: white;">${romType === 'angle' ? 'Degrees (°)' : 'Centimeters (cm)'}</strong></p>
+                <p>Method: <strong style="color: white;">${romType === 'angle' ? 'Quaternion (max−min per rep)' : 'Double integration (max−min per rep)'}</strong></p>
+                <p style="margin-top: 8px; color: #f39c12;"><strong>How to calibrate:</strong></p>
+                <p>1. Press "🎯 Calibrate"</p>
+                <p>2. Do ONE full-range rep</p>
+                <p>3. Press "✅ Done" to set target</p>
+                <p>4. Every rep shows fulfillment %</p>
+                <p style="margin-top: 6px; color: #27ae60;">Position doesn't matter! ROM = range within each rep</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(overlay);
+      
+      // Init ROM test chart
+      const ctx = document.getElementById('rom-test-chart').getContext('2d');
+      romTestChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: romType === 'angle' ? 'Angular Distance (°)' : 'Displacement (cm)',
+            data: [],
+            borderColor: '#e67e22',
+            backgroundColor: 'rgba(230, 126, 34, 0.1)',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.2,
+            fill: true
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            x: { display: true, ticks: { color: '#888', maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { display: true, ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,0.1)' }, grace: '10%',
+              title: { display: true, text: romType === 'angle' ? 'Degrees (°)' : 'Displacement (cm)', color: '#888' }
+            }
+          },
+          plugins: { legend: { display: false } }
+        }
+      });
+      
+      // Start UI update loop
+      romTestUpdateInterval = setInterval(updateROMTestUI, 100);
+    }
+    
+    function updateROMTestUI() {
+      if (!romTestActive) return;
+      
+      const romType = romComputer.getROMType(selectedExercise);
+      const unit = romType === 'angle' ? '°' : ' cm';
+      const liveValue = romComputer.liveRepROM; // within-rep range (max-min)
+      
+      // Update live value (show rep ROM, not absolute angle)
+      const liveEl = document.getElementById('rom-test-live');
+      if (liveEl && !romCalibrating && !romComputer.isCalibrationRep) {
+        liveEl.innerHTML = `${liveValue.toFixed(1)}<span style="font-size: 0.4em;">${unit}</span>`;
+      }
+      
+      // Update quaternion/angle display
+      const quatEl = document.getElementById('rom-test-quat');
+      const normEl = document.getElementById('rom-test-norm');
+      if (quatEl) {
+        quatEl.textContent = `${romComputer.liveAngleDeg.toFixed(1)}°`;
+      }
+      
+      // Update fulfillment bar
+      if (romComputer.romCalibrated) {
+        const container = document.getElementById('rom-test-fulfillment-container');
+        if (container) container.style.display = 'block';
+        
+        const pctEl = document.getElementById('rom-test-fulfillment-pct');
+        const barEl = document.getElementById('rom-test-fulfillment-bar');
+        const targetEl = document.getElementById('rom-test-target-val');
+        const statusEl = document.getElementById('rom-test-calib-status');
+        
+        const pct = romComputer.liveFulfillment;
+        if (pctEl) pctEl.textContent = `${pct.toFixed(0)}%`;
+        if (barEl) {
+          barEl.style.width = Math.min(100, pct) + '%';
+          barEl.style.background = pct >= 90 ? '#27ae60' : pct >= 70 ? '#f39c12' : '#e74c3c';
+        }
+        if (targetEl) targetEl.textContent = `${romComputer.targetROM.toFixed(1)}${unit}`;
+        if (statusEl) statusEl.innerHTML = `✅ Calibrated — Target: <strong>${romComputer.targetROM.toFixed(1)}${unit}</strong>`;
+      }
+      
+      // Update during calibration rep
+      if (romComputer.isCalibrationRep) {
+        const liveEl2 = document.getElementById('rom-test-live');
+        if (liveEl2) {
+          liveEl2.innerHTML = `<div style="font-size: 18px; margin-bottom: 4px;">🎯 Calibration Rep</div>
+            <span style="font-size: clamp(40px, 10vw, 60px); font-weight: bold;">${liveValue.toFixed(1)}</span>
+            <span style="font-size: 0.3em;">${unit}</span>
+            <div style="font-size: 14px; margin-top: 8px; color: #ffeaa7;">Do your FULLEST rep, then press "✅ Done"</div>`;
+        }
+      }
+      
+      // Update velocity for stroke
+      const velEl = document.getElementById('rom-test-vel');
+      if (velEl) {
+        velEl.textContent = (romComputer.liveVelocity * 100).toFixed(1);
+      }
+      
+      // Update chart
+      if (romTestChart && romComputer.sampleHistory.length > 0) {
+        const startTime = romComputer.sampleHistory[0].t;
+        romTestChart.data.labels = romComputer.sampleHistory.map(s => ((s.t - startTime) / 1000).toFixed(1));
+        romTestChart.data.datasets[0].data = romComputer.sampleHistory.map(s => s.v);
+        
+        // Add target ROM line if calibrated
+        if (romComputer.romCalibrated && romTestChart.data.datasets.length === 1) {
+          romTestChart.data.datasets.push({
+            label: 'Target ROM',
+            data: [],
+            borderColor: '#e74c3c',
+            borderWidth: 1,
+            borderDash: [5, 5],
+            pointRadius: 0,
+            fill: false
+          });
+        }
+        if (romComputer.romCalibrated && romTestChart.data.datasets.length > 1) {
+          romTestChart.data.datasets[1].data = romComputer.sampleHistory.map(() => romComputer.targetROM);
+        }
+        romTestChart.update('none');
+      }
+      
+      // Update per-rep table with fulfillment
+      const tableEl = document.getElementById('rom-test-rep-table');
+      if (tableEl && romComputer.repROMs.length > 0) {
+        let html = '<table style="width: 100%; border-collapse: collapse;">';
+        html += '<tr style="border-bottom: 1px solid rgba(255,255,255,0.1);"><th style="text-align: left; padding: 4px; color: #888;">Rep</th><th style="text-align: right; padding: 4px; color: #888;">ROM</th>';
+        if (romComputer.romCalibrated) html += '<th style="text-align: right; padding: 4px; color: #888;">%</th>';
+        html += '</tr>';
+        romComputer.repROMs.forEach(r => {
+          const pct = r.fulfillment;
+          const pctColor = pct >= 90 ? '#27ae60' : pct >= 70 ? '#f39c12' : '#e74c3c';
+          html += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">`;
+          html += `<td style="padding: 4px;">#${r.repIndex}</td>`;
+          html += `<td style="text-align: right; padding: 4px; color: #e67e22; font-weight: bold;">${r.romValue.toFixed(1)} ${r.unit}</td>`;
+          if (romComputer.romCalibrated && pct !== null) {
+            html += `<td style="text-align: right; padding: 4px; color: ${pctColor}; font-weight: bold;">${pct.toFixed(0)}%</td>`;
+          }
+          html += `</tr>`;
+        });
+        html += '</table>';
+        tableEl.innerHTML = html;
+      }
+      
+      // Update set stats with fulfillment
+      const statsEl = document.getElementById('rom-test-stats');
+      if (statsEl) {
+        const stats = romComputer.getSetStats();
+        if (stats) {
+          let statsHTML = `
+            <p>Avg ROM: <span style="color: #e67e22; font-weight: bold;">${stats.avgROM.toFixed(1)}${unit}</span></p>
+            <p>Max ROM: <span style="color: #e67e22; font-weight: bold;">${stats.maxROM.toFixed(1)}${unit}</span></p>
+            <p>Consistency: <span style="color: ${stats.romConsistencyPercent > 80 ? '#27ae60' : stats.romConsistencyPercent > 60 ? '#f39c12' : '#e74c3c'}; font-weight: bold;">${stats.romConsistencyPercent.toFixed(0)}%</span></p>
+            <p>Reps: <span style="color: #e67e22; font-weight: bold;">${stats.repCount}</span></p>`;
+          if (stats.avgFulfillment !== null) {
+            const fColor = stats.avgFulfillment >= 90 ? '#27ae60' : stats.avgFulfillment >= 70 ? '#f39c12' : '#e74c3c';
+            statsHTML += `<p>Avg Fulfillment: <span style="color: ${fColor}; font-weight: bold;">${stats.avgFulfillment.toFixed(0)}%</span></p>`;
+            statsHTML += `<p>Target ROM: <span style="color: #3498db; font-weight: bold;">${stats.targetROM.toFixed(1)}${unit}</span></p>`;
+          }
+          statsEl.innerHTML = statsHTML;
+        }
+      }
+      
+      // Update norm display
+      if (normEl && romComputer.baselineQuat) {
+        normEl.textContent = '✓';
+        normEl.style.color = '#27ae60';
+      }
+    }
+    
+    // ---- ROM Calibration Rep (do 1 full-range rep to set target) ----
+    function romTestStartCalibRep() {
+      romComputer.startCalibrationRep();
+      
+      // Change button to "Done"
+      const btn = document.getElementById('rom-calib-rep-btn');
+      if (btn) {
+        btn.textContent = '✅ Done (finish rep)';
+        btn.style.background = '#27ae60';
+        btn.onclick = romTestFinishCalibRep;
+      }
+      
+      const statusEl = document.getElementById('rom-test-calib-status');
+      if (statusEl) statusEl.innerHTML = '🎯 <strong>Do your fullest rep now!</strong> Press "✅ Done" when finished.';
+    }
+    
+    function romTestFinishCalibRep() {
+      const targetROM = romComputer.finishCalibrationRep();
+      const romType = romComputer.getROMType(selectedExercise);
+      const unit = romType === 'angle' ? '°' : ' cm';
+      
+      // Restore button
+      const btn = document.getElementById('rom-calib-rep-btn');
+      if (btn) {
+        btn.textContent = '🎯 Re-Calibrate';
+        btn.style.background = '#3498db';
+        btn.onclick = romTestStartCalibRep;
+      }
+      
+      if (targetROM === null) {
+        const statusEl = document.getElementById('rom-test-calib-status');
+        if (statusEl) statusEl.innerHTML = '❌ Not enough movement detected. Try again!';
+        return;
+      }
+      
+      // Show success
+      const liveEl = document.getElementById('rom-test-live');
+      if (liveEl) {
+        liveEl.innerHTML = `<div style="font-size: 18px;">✅ Target ROM Set!</div>
+          <div style="font-size: clamp(40px, 10vw, 60px); font-weight: bold;">${targetROM.toFixed(1)}<span style="font-size: 0.4em;">${unit}</span></div>
+          <div style="font-size: 14px; margin-top: 8px; color: #ffeaa7;">Now do your set — each rep shows fulfillment %</div>`;
+      }
+      
+      // Reset rep table and stats
+      const tableEl = document.getElementById('rom-test-rep-table');
+      if (tableEl) tableEl.innerHTML = '<p style="color: #27ae60;">✅ Target set! Start your working set...</p>';
+      
+      console.log(`✅ ROM calibration complete. Target: ${targetROM.toFixed(1)}${unit}`);
+      
+      // Restore normal display after 2s
+      setTimeout(restoreCalibLiveDisplay, 2000);
+    }
+    
+    function romTestCalibrate() {
+      if (romCalibrating) return; // already calibrating
+      
+      romCalibrating = true;
+      romCalibSamples = [];
+      romCalibStartTime = Date.now();
+      
+      // Show calibration overlay inside the modal
+      const liveEl = document.getElementById('rom-test-live');
+      if (liveEl) {
+        liveEl.dataset.originalHTML = liveEl.innerHTML;
+        liveEl.innerHTML = `<div style="font-size: 20px;">🎯 Hold still...</div>
+          <div id="rom-calib-countdown" style="font-size: clamp(48px, 12vw, 72px); font-weight: bold;">3</div>
+          <div style="background: rgba(0,0,0,0.3); border-radius: 8px; height: 12px; margin-top: 10px; overflow: hidden;">
+            <div id="rom-calib-bar" style="height: 100%; width: 0%; background: #27ae60; border-radius: 8px; transition: width 0.1s;"></div>
+          </div>
+          <div id="rom-calib-samples" style="font-size: 13px; margin-top: 6px; opacity: 0.8;">Collecting samples...</div>`;
+      }
+      
+      console.log('📐 ROM calibration started — hold position for 3 seconds');
+    }
+    
+    function updateCalibrationProgress(elapsed) {
+      const remaining = Math.max(0, Math.ceil((ROM_CALIB_DURATION - elapsed) / 1000));
+      const pct = Math.min(100, (elapsed / ROM_CALIB_DURATION) * 100);
+      
+      const countdownEl = document.getElementById('rom-calib-countdown');
+      if (countdownEl) countdownEl.textContent = remaining;
+      
+      const barEl = document.getElementById('rom-calib-bar');
+      if (barEl) barEl.style.width = pct + '%';
+      
+      const samplesEl = document.getElementById('rom-calib-samples');
+      if (samplesEl) samplesEl.textContent = `Collected ${romCalibSamples.length} samples...`;
+    }
+    
+    function finishCalibration() {
+      romCalibrating = false;
+      
+      if (romCalibSamples.length < 5) {
+        alert('Not enough samples collected. Ensure the ESP32 is streaming data, then try again.');
+        restoreCalibLiveDisplay();
+        return;
+      }
+      
+      // Average quaternion components (works well when they're close together)
+      let sumW = 0, sumX = 0, sumY = 0, sumZ = 0;
+      let sumRoll = 0, sumPitch = 0, sumYaw = 0;
+      
+      // Ensure consistent hemisphere (flip quats if dot with first is negative)
+      const ref = romCalibSamples[0];
+      romCalibSamples.forEach(s => {
+        const dot = ref.qw*s.qw + ref.qx*s.qx + ref.qy*s.qy + ref.qz*s.qz;
+        const sign = dot < 0 ? -1 : 1;
+        sumW += s.qw * sign;
+        sumX += s.qx * sign;
+        sumY += s.qy * sign;
+        sumZ += s.qz * sign;
+        sumRoll += s.roll;
+        sumPitch += s.pitch;
+        sumYaw += s.yaw;
+      });
+      
+      const n = romCalibSamples.length;
+      const avgQ = { w: sumW/n, x: sumX/n, y: sumY/n, z: sumZ/n };
+      // Normalize
+      const norm = Math.sqrt(avgQ.w*avgQ.w + avgQ.x*avgQ.x + avgQ.y*avgQ.y + avgQ.z*avgQ.z);
+      avgQ.w /= norm; avgQ.x /= norm; avgQ.y /= norm; avgQ.z /= norm;
+      
+      const avgEuler = { roll: sumRoll/n, pitch: sumPitch/n, yaw: sumYaw/n };
+      
+      // Set baseline directly on romComputer
+      romComputer.baselineQuat = avgQ;
+      romComputer.baselineAngle = avgEuler;
+      
+      // Average accelerometer readings = gravity vector at baseline orientation
+      let sumAx = 0, sumAy = 0, sumAz = 0;
+      romCalibSamples.forEach(s => { sumAx += s.accelX; sumAy += s.accelY; sumAz += s.accelZ; });
+      romComputer.baselineGravity = { x: sumAx/n, y: sumAy/n, z: sumAz/n };
+      
+      // Set gravity magnitude for quaternion-based approach
+      romComputer.gravityMag = Math.sqrt(romComputer.baselineGravity.x**2 + romComputer.baselineGravity.y**2 + romComputer.baselineGravity.z**2);
+      
+      // Compute gyro bias from rest samples
+      let sumGx=0, sumGy=0, sumGz=0;
+      romCalibSamples.forEach(s => {
+        sumGx += s.gyroX || 0;
+        sumGy += s.gyroY || 0;
+        sumGz += s.gyroZ || 0;
+      });
+      romComputer.gyroBias = { x: sumGx/n, y: sumGy/n, z: sumGz/n };
+      
+      // Auto-detect gyro units: if bias magnitude is small (<0.3), it's likely radians/sec
+      const gyroBiasMag = Math.abs(romComputer.gyroBias.x) + Math.abs(romComputer.gyroBias.y) + Math.abs(romComputer.gyroBias.z);
+      romComputer.gyroInRadians = gyroBiasMag < 0.3;
+      const gyroUnits = romComputer.gyroInRadians ? 'rad/s' : 'deg/s';
+      
+      console.log(`📐 Gravity vector: [${romComputer.baselineGravity.x.toFixed(3)}, ${romComputer.baselineGravity.y.toFixed(3)}, ${romComputer.baselineGravity.z.toFixed(3)}] mag=${romComputer.gravityMag.toFixed(3)}`);
+      console.log(`📐 Gyro bias: [${romComputer.gyroBias.x.toFixed(4)}, ${romComputer.gyroBias.y.toFixed(4)}, ${romComputer.gyroBias.z.toFixed(4)}] ${gyroUnits} (auto-detected)`);
+      
+      romComputer.currentRepData = [];
+      romComputer.sampleHistory = [];
+      romComputer.velocity = 0;
+      romComputer.displacement = 0;
+      romComputer.stillCounter = 0;
+      romComputer.peakDisplacement = 0;
+      romComputer.minDisplacement = 0;
+      romComputer.liveAngleDeg = 0;
+      romComputer.liveDisplacementCm = 0;
+      romComputer.repROMs = [];
+      romComputer.primaryAxis = null;
+      
+      const gMag = Math.sqrt(romComputer.baselineGravity.x**2 + romComputer.baselineGravity.y**2 + romComputer.baselineGravity.z**2);
+      console.log(`📐 ROM baseline set! Averaged ${n} samples. Quat: [${avgQ.w.toFixed(3)}, ${avgQ.x.toFixed(3)}, ${avgQ.y.toFixed(3)}, ${avgQ.z.toFixed(3)}]`);
+      console.log(`📐 Euler baseline: Roll=${avgEuler.roll.toFixed(1)}° Pitch=${avgEuler.pitch.toFixed(1)}° Yaw=${avgEuler.yaw.toFixed(1)}°`);
+      console.log(`📐 Gravity baseline: [${romComputer.baselineGravity.x.toFixed(3)}, ${romComputer.baselineGravity.y.toFixed(3)}, ${romComputer.baselineGravity.z.toFixed(3)}] mag=${gMag.toFixed(3)} m/s²`);
+      
+      // Show success briefly then restore
+      const liveEl = document.getElementById('rom-test-live');
+      if (liveEl) {
+        liveEl.innerHTML = `<div style="font-size: 20px;">✅ Baseline Set!</div>
+          <div style="font-size: 16px; margin-top: 8px;">${n} samples averaged</div>
+          <div style="font-size: 13px; margin-top: 4px; opacity: 0.8">Q: [${avgQ.w.toFixed(2)}, ${avgQ.x.toFixed(2)}, ${avgQ.y.toFixed(2)}, ${avgQ.z.toFixed(2)}]</div>
+          <div style="font-size: 14px; margin-top: 8px; color: #ffeaa7;">Start exercising now!</div>`;
+      }
+      
+      // Reset rep table & stats
+      const tableEl = document.getElementById('rom-test-rep-table');
+      if (tableEl) tableEl.innerHTML = '<p style="color: #27ae60;">✅ Baseline set! Start exercising...</p>';
+      const statsEl = document.getElementById('rom-test-stats');
+      if (statsEl) {
+        const unit = romComputer.getROMType(selectedExercise) === 'angle' ? '°' : ' cm';
+        statsEl.innerHTML = `
+          <p>Avg ROM: <span style="color: #e67e22; font-weight: bold;">--</span></p>
+          <p>Max ROM: <span style="color: #e67e22; font-weight: bold;">--</span></p>
+          <p>Consistency: <span style="color: #e67e22; font-weight: bold;">--</span></p>
+          <p>Reps: <span style="color: #e67e22; font-weight: bold;">0</span></p>
+        `;
+      }
+      
+      // After 1.5s, restore normal live display
+      setTimeout(restoreCalibLiveDisplay, 1500);
+    }
+    
+    function restoreCalibLiveDisplay() {
+      const liveEl = document.getElementById('rom-test-live');
+      if (liveEl) {
+        const romType = romComputer.getROMType(selectedExercise);
+        const unit = romType === 'angle' ? '°' : ' cm';
+        liveEl.innerHTML = `0.0<span style="font-size: 0.4em;">${unit}</span>`;
+      }
+    }
+    
+    function closeROMTestModal() {
+      romTestActive = false;
+      romComputer.autoRepEnabled = false;
+      if (romTestUpdateInterval) clearInterval(romTestUpdateInterval);
+      if (romTestChart) { romTestChart.destroy(); romTestChart = null; }
+      const overlay = document.getElementById('rom-test-overlay');
+      if (overlay) document.body.removeChild(overlay);
+    }
     
     // Sample counting for data rate calculation
     let sampleCount = 0;
@@ -1460,10 +2298,37 @@
           imuData.roll, imuData.pitch, imuData.yaw,
           imuData.qw, imuData.qx, imuData.qy, imuData.qz,
           imuData.accelX, imuData.accelY, imuData.accelZ,
+          imuData.gyroX, imuData.gyroY, imuData.gyroZ,
           relativeTime
         );
         
         updateRepStats();
+      }
+      
+      // Feed ROM computer when ROM test modal is active (independent of recording)
+      if (romTestActive && !(isRecording && !countdownActive)) {
+        romComputer.addSample(
+          imuData.roll, imuData.pitch, imuData.yaw,
+          imuData.qw, imuData.qx, imuData.qy, imuData.qz,
+          imuData.accelX, imuData.accelY, imuData.accelZ,
+          imuData.gyroX, imuData.gyroY, imuData.gyroZ,
+          imuData.timestamp
+        );
+      }
+      
+      // Collect calibration samples when calibrating
+      if (romCalibrating) {
+        romCalibSamples.push({
+          qw: imuData.qw, qx: imuData.qx, qy: imuData.qy, qz: imuData.qz,
+          roll: imuData.roll, pitch: imuData.pitch, yaw: imuData.yaw,
+          accelX: imuData.accelX, accelY: imuData.accelY, accelZ: imuData.accelZ,
+          gyroX: imuData.gyroX, gyroY: imuData.gyroY, gyroZ: imuData.gyroZ
+        });
+        const elapsed = Date.now() - romCalibStartTime;
+        updateCalibrationProgress(elapsed);
+        if (elapsed >= ROM_CALIB_DURATION) {
+          finishCalibration();
+        }
       }
       
       // Always update display (even when not recording)

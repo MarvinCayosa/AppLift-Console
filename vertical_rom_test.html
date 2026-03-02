@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Vertical ROM Accuracy Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+      color: #fff;
+      min-height: 100vh;
+      padding: 15px;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 6px; color: #f39c12; font-size: clamp(18px, 5vw, 28px); }
+    .subtitle { text-align: center; color: #888; margin-bottom: 18px; font-size: 13px; }
+
+    .card {
+      background: rgba(255,255,255,0.06);
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 16px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .card h2 { color: #f39c12; margin-bottom: 12px; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+
+    .btn {
+      padding: 12px 22px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+      min-height: 42px;
+      color: white;
+      margin: 4px;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-blue { background: linear-gradient(135deg, #4fc3f7, #2196f3); }
+    .btn-green { background: linear-gradient(135deg, #66bb6a, #43a047); }
+    .btn-orange { background: linear-gradient(135deg, #ffa726, #e65100); }
+    .btn-red { background: linear-gradient(135deg, #ef5350, #c62828); }
+    .btn-purple { background: linear-gradient(135deg, #ab47bc, #7b1fa2); }
+    .btn-grey { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
+
+    .status-dot { width: 12px; height: 12px; border-radius: 50%; background: #f44336; display: inline-block; }
+    .status-dot.active { background: #4caf50; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
+
+    .live-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .live-item {
+      background: rgba(0,0,0,0.3);
+      padding: 12px;
+      border-radius: 10px;
+      text-align: center;
+    }
+    .live-item label { display: block; color: #888; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
+    .live-item .val { font-size: 22px; font-weight: bold; font-family: 'Consolas', monospace; color: #f39c12; }
+
+    .test-section { margin-top: 14px; }
+    .test-section h3 { color: #4fc3f7; font-size: 15px; margin-bottom: 10px; }
+
+    .test-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .test-controls input {
+      width: 80px; padding: 8px; font-size: 14px; border-radius: 8px; border: 2px solid #f39c12;
+      background: rgba(0,0,0,0.3); color: white; text-align: center;
+    }
+    .test-controls label { font-size: 13px; color: #ccc; }
+
+    .chart-box {
+      background: rgba(0,0,0,0.25);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 14px;
+      position: relative;
+    }
+    .chart-box canvas { width: 100% !important; height: 220px !important; }
+
+    /* Trial log table */
+    .trial-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+    .trial-table th, .trial-table td { padding: 8px 10px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .trial-table th { color: #888; font-weight: 600; text-transform: uppercase; font-size: 11px; }
+    .trial-table td { color: #eee; }
+    .trial-table .good { color: #66bb6a; }
+    .trial-table .warn { color: #ffa726; }
+    .trial-table .bad { color: #ef5350; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .summary-item {
+      background: rgba(0,0,0,0.3);
+      padding: 14px;
+      border-radius: 10px;
+      text-align: center;
+    }
+    .summary-item .label { color: #888; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
+    .summary-item .sval { font-size: 20px; font-weight: bold; color: #f39c12; }
+
+    .instructions {
+      background: rgba(76,175,80,0.1);
+      border: 1px solid rgba(76,175,80,0.3);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .instructions h3 { color: #4caf50; margin-bottom: 8px; }
+    .instructions ol { padding-left: 20px; }
+
+    .back-link { display: inline-block; margin-bottom: 12px; color: #4fc3f7; text-decoration: none; font-size: 14px; }
+    .back-link:hover { text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      .live-grid { grid-template-columns: repeat(3, 1fr); }
+      .live-item .val { font-size: 18px; }
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="index.html" class="back-link">← Back to AppLift Console</a>
+  <h1>📐 Vertical ROM Accuracy Test</h1>
+  <p class="subtitle">Validate IMU vertical displacement against known distances. Export results to CSV.</p>
+
+  <!-- Instructions -->
+  <div class="instructions">
+    <h3>📋 How to Test</h3>
+    <ol>
+      <li><strong>Connect</strong> your ESP32 IMU via Bluetooth.</li>
+      <li><strong>Rest Drift Test:</strong> Place sensor flat, record 10s — drift should be near 0 cm.</li>
+      <li><strong>Known Distance Test:</strong> Set a target distance (e.g. 20 cm), calibrate baseline, lift sensor to that height, hold, lower back down.</li>
+      <li>Repeat multiple trials. The table below logs each trial with measured peak vs. expected distance and error %.</li>
+      <li><strong>Export CSV</strong> with all raw samples + trial results for offline analysis.</li>
+    </ol>
+  </div>
+
+  <!-- Connection -->
+  <div class="card">
+    <h2><span class="status-dot" id="connDot"></span> BLE Connection</h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+      <button class="btn btn-blue" id="connectBtn" onclick="connectBLE()">📶 Connect ESP32</button>
+      <button class="btn btn-grey" id="disconnectBtn" onclick="disconnectBLE()" disabled>Disconnect</button>
+    </div>
+    <div class="live-grid" id="livePanel" style="display:none;">
+      <div class="live-item"><label>Accel X</label><div class="val" id="lAx">--</div></div>
+      <div class="live-item"><label>Accel Y</label><div class="val" id="lAy">--</div></div>
+      <div class="live-item"><label>Accel Z</label><div class="val" id="lAz">--</div></div>
+      <div class="live-item"><label>Roll</label><div class="val" id="lRoll">--</div></div>
+      <div class="live-item"><label>Pitch</label><div class="val" id="lPitch">--</div></div>
+      <div class="live-item"><label>Yaw</label><div class="val" id="lYaw">--</div></div>
+      <div class="live-item"><label>Quat W</label><div class="val" id="lQw">--</div></div>
+      <div class="live-item"><label>Quat X</label><div class="val" id="lQx">--</div></div>
+      <div class="live-item"><label>Quat Y</label><div class="val" id="lQy">--</div></div>
+      <div class="live-item"><label>Quat Z</label><div class="val" id="lQz">--</div></div>
+      <div class="live-item"><label>Data Rate</label><div class="val" id="lHz">--</div></div>
+      <div class="live-item"><label>Samples</label><div class="val" id="lSamples">0</div></div>
+    </div>
+  </div>
+
+  <!-- LIVE DISPLACEMENT -->
+  <div class="card">
+    <h2>📏 Live Vertical Displacement</h2>
+    <div style="text-align:center; margin-bottom: 12px;">
+      <div style="font-size:13px; color:#aaa; margin-bottom:4px;">Current Displacement</div>
+      <div id="liveDisp" style="font-size: clamp(48px, 12vw, 72px); font-weight: bold; color: #f39c12; line-height: 1;">
+        0.0 <span style="font-size:0.35em;">cm</span>
+      </div>
+      <div style="display: flex; justify-content: center; gap: 24px; margin-top: 8px; font-size: 13px;">
+        <span>Velocity: <span id="liveVel" style="color:#4fc3f7;">0.0</span> cm/s</span>
+        <span>Peak: <span id="livePeak" style="color:#66bb6a;">0.0</span> cm</span>
+        <span>Min: <span id="liveMin" style="color:#ef5350;">0.0</span> cm</span>
+      </div>
+    </div>
+    <div class="chart-box">
+      <canvas id="dispChart"></canvas>
+    </div>
+  </div>
+
+  <!-- TEST 1: REST DRIFT -->
+  <div class="card">
+    <h2>1️⃣ Rest Drift Test</h2>
+    <p style="font-size:13px; color:#aaa; margin-bottom:12px;">Place sensor flat and still. Records for a set duration and checks if displacement drifts.</p>
+    <div class="test-controls">
+      <label>Duration (s):</label>
+      <input type="number" id="driftDuration" value="10" min="3" max="60">
+      <button class="btn btn-green" id="driftStartBtn" onclick="startDriftTest()">▶ Start Drift Test</button>
+      <span id="driftStatus" style="font-size:13px; color:#aaa;"></span>
+    </div>
+    <div id="driftResult" style="display:none;">
+      <div class="summary-grid">
+        <div class="summary-item"><div class="label">Max Drift</div><div class="sval" id="driftMax">--</div></div>
+        <div class="summary-item"><div class="label">Mean Drift</div><div class="sval" id="driftMean">--</div></div>
+        <div class="summary-item"><div class="label">Std Dev</div><div class="sval" id="driftStd">--</div></div>
+        <div class="summary-item"><div class="label">Verdict</div><div class="sval" id="driftVerdict">--</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEST 2: KNOWN DISTANCE TRIALS -->
+  <div class="card">
+    <h2>2️⃣ Known Distance Trials</h2>
+    <p style="font-size:13px; color:#aaa; margin-bottom:12px;">
+      Set expected distance, calibrate baseline (hold still 3s), then lift sensor to the target height and lower it back. Repeat for multiple trials.
+    </p>
+    <div class="test-controls">
+      <label>Expected Distance (cm):</label>
+      <input type="number" id="expectedDist" value="20" min="1" max="300" step="0.5">
+    </div>
+    <div class="test-controls">
+      <button class="btn btn-orange" id="calibBtn" onclick="calibrateBaseline()">📌 Calibrate Baseline (3s hold)</button>
+      <button class="btn btn-green" id="trialStartBtn" onclick="startTrial()" disabled>▶ Start Trial</button>
+      <button class="btn btn-red" id="trialStopBtn" onclick="stopTrial()" disabled style="display:none;">⏹ Stop Trial</button>
+      <span id="trialStatus" style="font-size:13px; color:#aaa;"></span>
+    </div>
+    <div id="calibInfo" style="display:none; font-size:12px; color:#66bb6a; margin-bottom:10px;"></div>
+
+    <!-- Trial log -->
+    <div id="trialLog" style="display:none;">
+      <h3 style="color:#f39c12; font-size:14px; margin-bottom:8px;">Trial Results</h3>
+      <div style="overflow-x:auto;">
+        <table class="trial-table" id="trialTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Expected (cm)</th>
+              <th>Measured Peak (cm)</th>
+              <th>ROM (max−min) (cm)</th>
+              <th>Error (cm)</th>
+              <th>Error %</th>
+              <th>Duration (s)</th>
+              <th>Samples</th>
+            </tr>
+          </thead>
+          <tbody id="trialBody"></tbody>
+        </table>
+      </div>
+      <!-- Summary stats -->
+      <div class="summary-grid" id="trialSummary" style="margin-top:12px; display:none;">
+        <div class="summary-item"><div class="label">Trials</div><div class="sval" id="sumTrials">0</div></div>
+        <div class="summary-item"><div class="label">Mean Error</div><div class="sval" id="sumMeanErr">--</div></div>
+        <div class="summary-item"><div class="label">Mean Abs Error</div><div class="sval" id="sumMAE">--</div></div>
+        <div class="summary-item"><div class="label">Std Dev Error</div><div class="sval" id="sumStdErr">--</div></div>
+        <div class="summary-item"><div class="label">Mean Error %</div><div class="sval" id="sumMeanPct">--</div></div>
+        <div class="summary-item"><div class="label">Best Trial</div><div class="sval" id="sumBest">--</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXPORT -->
+  <div class="card">
+    <h2>💾 Export Results</h2>
+    <p style="font-size:13px; color:#aaa; margin-bottom:12px;">Export all raw sensor samples and trial results to CSV for analysis.</p>
+    <div style="display:flex; flex-wrap:wrap; gap:8px;">
+      <button class="btn btn-purple" onclick="exportRawCSV()">📥 Export Raw Samples CSV</button>
+      <button class="btn btn-purple" onclick="exportTrialsCSV()">📊 Export Trials CSV</button>
+      <button class="btn btn-purple" onclick="exportAllJSON()">📋 Export All (JSON)</button>
+      <button class="btn btn-red" onclick="clearAllData()">🗑 Clear All Data</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========== BLE ==========
+const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+const CHAR_UUID_IMU = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+let device = null;
+let characteristic = null;
+let connected = false;
+
+// ========== SAMPLE STORAGE ==========
+let allSamples = [];       // every IMU sample since connect
+let sampleCount = 0;
+let lastRateTime = Date.now();
+let dataRate = 0;
+
+// ========== KALMAN FILTER ==========
+class KalmanFilter {
+  constructor(Q = 0.01, R = 0.5, P = 1, x0 = 0) {
+    this.Q = Q; this.R = R; this.P = P; this.x = x0;
+  }
+  update(z) {
+    this.P += this.Q;
+    const K = this.P / (this.P + this.R);
+    this.x += K * (z - this.x);
+    this.P *= (1 - K);
+    return this.x;
+  }
+}
+const kfX = new KalmanFilter(0.01, 0.5, 1, 0);
+const kfY = new KalmanFilter(0.01, 0.5, 1, 0);
+const kfZ = new KalmanFilter(0.01, 0.5, 1, 9.81);
+
+// ========== DISPLACEMENT ENGINE (quaternion gravity removal + trapezoidal integration + ZUPT) ==========
+// Improved approach:
+// 1. At calibration: measure gravity magnitude from rest accel; detect gyro units
+// 2. Each sample: use ESP32's onboard quaternion to rotate accel → world frame
+// 3. World-Z minus calibrated gravity = vertical linear acceleration
+// 4. ZUPT when still (accel + gyro detection)
+// 5. Live trapezoidal integration for display
+// 6. Retrospective ZUPT correction when trial ends (for accurate measurement)
+const disp = {
+  gravityMag: 9.81,           // calibrated gravity magnitude (from rest accel)
+  baselineSet: false,         // true after calibration
+  gyroInRadians: false,       // auto-detected: true if ESP32 outputs rad/s
+  velocity: 0,
+  displacement: 0,
+  stillCounter: 0,
+  lastTimestamp: 0,
+  peakDisplacement: 0,
+  minDisplacement: 0,
+  NOISE_FLOOR: 0.06,          // m/s² — accel dead-zone (tighter for better sensitivity)
+  ZUPT_THRESHOLD: 0.12,       // m/s² — accel-magnitude rest detection
+  GYRO_STILL_RAD: 0.06,       // rad/s — gyro rest detection (~3.4°/s)
+  ZUPT_SAMPLES: 2,            // consecutive still samples to trigger ZUPT (faster response)
+  ZUPT_DECAY: 0.03,           // very aggressive velocity decay at rest
+  MAX_DISP: 2.0,              // meters hard clamp
+  MAX_VEL: 2.0,               // m/s velocity clamp (prevents runaway)
+  DEG2RAD: Math.PI / 180,
+
+  // Quaternion vector rotation: v' = q * v * q_conjugate (optimized)
+  rotateVecByQuat(v, q) {
+    const tx = 2 * (q.y * v.z - q.z * v.y);
+    const ty = 2 * (q.z * v.x - q.x * v.z);
+    const tz = 2 * (q.x * v.y - q.y * v.x);
+    return {
+      x: v.x + q.w * tx + (q.y * tz - q.z * ty),
+      y: v.y + q.w * ty + (q.z * tx - q.x * tz),
+      z: v.z + q.w * tz + (q.x * ty - q.y * tx)
+    };
+  },
+
+  reset() {
+    this.gravityMag = 9.81;
+    this.baselineSet = false;
+    this.gyroInRadians = false;
+    this.velocity = 0;
+    this.displacement = 0;
+    this.stillCounter = 0;
+    this.lastTimestamp = 0;
+    this.peakDisplacement = 0;
+    this.minDisplacement = 0;
+    this.prevVertAccel = 0;
+  },
+
+  setBaseline(ax, ay, az, gx, gy, gz, gyroIsRadians) {
+    this.gravityMag = Math.sqrt(ax*ax + ay*ay + az*az);
+    this.gyroInRadians = gyroIsRadians;
+    this.baselineSet = true;
+    this.velocity = 0;
+    this.displacement = 0;
+    this.stillCounter = 0;
+    this.peakDisplacement = 0;
+    this.minDisplacement = 0;
+    this.lastTimestamp = 0;
+    this.prevVertAccel = 0;
+    const units = gyroIsRadians ? 'rad/s' : 'deg/s';
+    console.log(`🔍 Gravity mag=${this.gravityMag.toFixed(4)} | Gyro units: ${units}`);
+  },
+
+  addSample(ax, ay, az, gx, gy, gz, qw, qx, qy, qz, ts) {
+    // Before calibration, just track gravity magnitude
+    if (!this.baselineSet) {
+      this.gravityMag = Math.sqrt(ax*ax + ay*ay + az*az);
+      this.lastTimestamp = ts;
+      return;
+    }
+
+    if (this.lastTimestamp === 0) { this.lastTimestamp = ts; return; }
+    const dt = (ts - this.lastTimestamp) / 1000;
+    if (dt <= 0 || dt >= 0.5) { this.lastTimestamp = ts; return; }
+    this.lastTimestamp = ts;
+
+    // === STEP 1: Quaternion-based gravity removal ===
+    // Rotate measured accel from sensor frame to world frame using ESP32's fused quaternion
+    const q = { w: qw, x: qx, y: qy, z: qz };
+    const accelWorld = this.rotateVecByQuat({ x: ax, y: ay, z: az }, q);
+    // Vertical linear acceleration = world-Z component minus calibrated gravity
+    const rawVertAccel = accelWorld.z - this.gravityMag;
+
+    // Light EMA smoothing (alpha=0.25 → preserves motion signal, reduces noise spikes)
+    const vertAccel = 0.25 * (this.prevVertAccel || 0) + 0.75 * rawVertAccel;
+    this.prevVertAccel = vertAccel;
+
+    // === STEP 2: Dead-zone (sensor noise) ===
+    const accelInput = Math.abs(vertAccel) < this.NOISE_FLOOR ? 0 : vertAccel;
+
+    // === STEP 3: ZUPT — combined accel + gyro stillness detection ===
+    const accelMagDev = Math.abs(Math.sqrt(ax*ax+ay*ay+az*az) - this.gravityMag);
+    const gyroMag = Math.sqrt(gx*gx + gy*gy + gz*gz);
+    const gyroMagRad = this.gyroInRadians ? gyroMag : gyroMag * this.DEG2RAD;
+    const isStill = accelMagDev < this.ZUPT_THRESHOLD && gyroMagRad < this.GYRO_STILL_RAD;
+
+    if (isStill) this.stillCounter++;
+    else this.stillCounter = 0;
+
+    if (this.stillCounter >= this.ZUPT_SAMPLES) {
+      this.velocity *= this.ZUPT_DECAY;
+      if (Math.abs(this.velocity) < 0.001) this.velocity = 0;
+    }
+
+    // === STEP 4: Trapezoidal integration ===
+    let newVelocity = this.velocity + accelInput * dt;
+    // Clamp velocity to prevent runaway integration drift
+    newVelocity = Math.max(-this.MAX_VEL, Math.min(this.MAX_VEL, newVelocity));
+    this.displacement += (this.velocity + newVelocity) / 2 * dt;
+    this.velocity = newVelocity;
+
+    this.displacement = Math.max(-this.MAX_DISP, Math.min(this.MAX_DISP, this.displacement));
+    this.peakDisplacement = Math.max(this.peakDisplacement, this.displacement);
+    this.minDisplacement = Math.min(this.minDisplacement, this.displacement);
+  }
+};
+
+// ========== CHARTS ==========
+let dispChart = null;
+const chartHistory = { labels: [], disp: [], vel: [] };
+const MAX_CHART = 200; // ~10s at 20Hz
+
+function initChart() {
+  const ctx = document.getElementById('dispChart').getContext('2d');
+  dispChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Displacement (cm)', data: [], borderColor: '#f39c12', borderWidth: 2, pointRadius: 0, tension: 0.2, fill: false, yAxisID: 'y' },
+        { label: 'Velocity (cm/s)', data: [], borderColor: '#4fc3f7', borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false, yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: {
+        x: { display: true, ticks: { color: '#666', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { display: true, position: 'left', ticks: { color: '#f39c12' }, grid: { color: 'rgba(255,255,255,0.08)' }, title: { display: true, text: 'cm', color: '#f39c12' }, grace: '10%' },
+        y1: { display: true, position: 'right', ticks: { color: '#4fc3f7' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'cm/s', color: '#4fc3f7' }, grace: '10%' }
+      },
+      plugins: { legend: { labels: { color: '#aaa', font: { size: 11 } } } }
+    }
+  });
+}
+
+function updateChart(tSec, dispCm, velCmS) {
+  chartHistory.labels.push(tSec.toFixed(1));
+  chartHistory.disp.push(dispCm);
+  chartHistory.vel.push(velCmS);
+  if (chartHistory.labels.length > MAX_CHART) {
+    chartHistory.labels.shift(); chartHistory.disp.shift(); chartHistory.vel.shift();
+  }
+  dispChart.data.labels = chartHistory.labels;
+  dispChart.data.datasets[0].data = chartHistory.disp;
+  dispChart.data.datasets[1].data = chartHistory.vel;
+  dispChart.update('none');
+}
+
+// ========== BLE CONNECTION ==========
+async function connectBLE() {
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: 'AppLift_IMU' }],
+      optionalServices: [SERVICE_UUID]
+    });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    characteristic = await service.getCharacteristic(CHAR_UUID_IMU);
+    await characteristic.startNotifications();
+    characteristic.addEventListener('characteristicvaluechanged', onIMU);
+
+    connected = true;
+    document.getElementById('connDot').classList.add('active');
+    document.getElementById('connectBtn').disabled = true;
+    document.getElementById('disconnectBtn').disabled = false;
+    document.getElementById('livePanel').style.display = 'grid';
+    initChart();
+    console.log('✅ Connected to AppLift_IMU');
+  } catch (e) {
+    alert('Connection failed: ' + e.message);
+  }
+}
+
+function disconnectBLE() {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  connected = false;
+  document.getElementById('connDot').classList.remove('active');
+  document.getElementById('connectBtn').disabled = false;
+  document.getElementById('disconnectBtn').disabled = true;
+}
+
+// ========== IMU DATA HANDLER ==========
+let firstTimestamp = null;
+
+function onIMU(event) {
+  const dv = new DataView(event.target.value.buffer);
+  const d = {
+    ax: dv.getFloat32(0, true), ay: dv.getFloat32(4, true), az: dv.getFloat32(8, true),
+    gx: dv.getFloat32(12, true), gy: dv.getFloat32(16, true), gz: dv.getFloat32(20, true),
+    roll: dv.getFloat32(24, true), pitch: dv.getFloat32(28, true), yaw: dv.getFloat32(32, true),
+    qw: dv.getFloat32(36, true), qx: dv.getFloat32(40, true), qy: dv.getFloat32(44, true), qz: dv.getFloat32(48, true),
+    ts: dv.getUint32(52, true)
+  };
+
+  if (firstTimestamp === null) firstTimestamp = d.ts;
+  const relMs = d.ts - firstTimestamp;
+
+  // Kalman
+  const fx = kfX.update(d.ax), fy = kfY.update(d.ay), fz = kfZ.update(d.az);
+
+  // Displacement engine (now uses quaternion for gravity removal)
+  disp.addSample(d.ax, d.ay, d.az, d.gx, d.gy, d.gz, d.qw, d.qx, d.qy, d.qz, d.ts);
+  const dispCm = disp.displacement * 100;
+  const velCmS = disp.velocity * 100;
+  const peakCm = disp.peakDisplacement * 100;
+  const minCm = disp.minDisplacement * 100;
+
+  // Store raw sample
+  const sample = {
+    relMs, ts: d.ts,
+    ax: d.ax, ay: d.ay, az: d.az,
+    fax: fx, fay: fy, faz: fz,
+    gx: d.gx, gy: d.gy, gz: d.gz,
+    roll: d.roll, pitch: d.pitch, yaw: d.yaw,
+    qw: d.qw, qx: d.qx, qy: d.qy, qz: d.qz,
+    dispCm, velCmS, peakCm, minCm
+  };
+  allSamples.push(sample);
+
+  // Feed active tests
+  if (driftTestActive) driftSamples.push(sample);
+  if (trialActive) trialSamples.push(sample);
+  if (calibrating) calibSamples.push(sample);
+
+  // Live UI (throttled)
+  sampleCount++;
+  const now = Date.now();
+  if (now - lastRateTime >= 1000) { dataRate = sampleCount; sampleCount = 0; lastRateTime = now; }
+
+  // Update live display every 3rd sample
+  if (allSamples.length % 3 === 0) {
+    document.getElementById('lAx').textContent = d.ax.toFixed(2);
+    document.getElementById('lAy').textContent = d.ay.toFixed(2);
+    document.getElementById('lAz').textContent = d.az.toFixed(2);
+    document.getElementById('lRoll').textContent = d.roll.toFixed(1);
+    document.getElementById('lPitch').textContent = d.pitch.toFixed(1);
+    document.getElementById('lYaw').textContent = d.yaw.toFixed(1);
+    document.getElementById('lQw').textContent = d.qw.toFixed(3);
+    document.getElementById('lQx').textContent = d.qx.toFixed(3);
+    document.getElementById('lQy').textContent = d.qy.toFixed(3);
+    document.getElementById('lQz').textContent = d.qz.toFixed(3);
+    document.getElementById('lHz').textContent = dataRate;
+    document.getElementById('lSamples').textContent = allSamples.length;
+
+    document.getElementById('liveDisp').innerHTML = `${dispCm.toFixed(1)} <span style="font-size:0.35em;">cm</span>`;
+    document.getElementById('liveVel').textContent = velCmS.toFixed(1);
+    document.getElementById('livePeak').textContent = peakCm.toFixed(1);
+    document.getElementById('liveMin').textContent = minCm.toFixed(1);
+
+    updateChart(relMs / 1000, dispCm, velCmS);
+  }
+}
+
+// ========== TEST 1: REST DRIFT ==========
+let driftTestActive = false;
+let driftSamples = [];
+let driftTimer = null;
+
+function startDriftTest() {
+  if (!connected) { alert('Connect ESP32 first!'); return; }
+  const dur = parseInt(document.getElementById('driftDuration').value) || 10;
+
+  // Reset displacement engine for clean test
+  disp.reset();
+  driftSamples = [];
+  driftTestActive = true;
+
+  document.getElementById('driftStartBtn').disabled = true;
+  document.getElementById('driftResult').style.display = 'none';
+
+  let elapsed = 0;
+  const statusEl = document.getElementById('driftStatus');
+  statusEl.textContent = `Recording... 0/${dur}s`;
+  statusEl.style.color = '#f44336';
+
+  driftTimer = setInterval(() => {
+    elapsed++;
+    statusEl.textContent = `Recording... ${elapsed}/${dur}s`;
+    if (elapsed >= dur) {
+      clearInterval(driftTimer);
+      driftTestActive = false;
+      finishDriftTest();
+    }
+  }, 1000);
+}
+
+function finishDriftTest() {
+  document.getElementById('driftStartBtn').disabled = false;
+  document.getElementById('driftStatus').textContent = 'Done!';
+  document.getElementById('driftStatus').style.color = '#66bb6a';
+
+  if (driftSamples.length < 5) {
+    alert('Not enough samples collected. Check BLE connection.');
+    return;
+  }
+
+  const disps = driftSamples.map(s => s.dispCm);
+  const absDisps = disps.map(Math.abs);
+  const maxDrift = Math.max(...absDisps);
+  const mean = absDisps.reduce((a, b) => a + b, 0) / absDisps.length;
+  const std = Math.sqrt(absDisps.reduce((s, v) => s + (v - mean) ** 2, 0) / absDisps.length);
+
+  document.getElementById('driftMax').textContent = maxDrift.toFixed(2) + ' cm';
+  document.getElementById('driftMean').textContent = mean.toFixed(2) + ' cm';
+  document.getElementById('driftStd').textContent = std.toFixed(3) + ' cm';
+
+  const verdictEl = document.getElementById('driftVerdict');
+  if (maxDrift < 1) { verdictEl.textContent = '✅ Excellent'; verdictEl.style.color = '#66bb6a'; }
+  else if (maxDrift < 3) { verdictEl.textContent = '⚠️ Acceptable'; verdictEl.style.color = '#ffa726'; }
+  else { verdictEl.textContent = '❌ High Drift'; verdictEl.style.color = '#ef5350'; }
+
+  document.getElementById('driftResult').style.display = 'block';
+
+  // Store drift test result
+  driftResults.push({
+    duration: parseInt(document.getElementById('driftDuration').value),
+    samples: driftSamples.length,
+    maxDrift, meanDrift: mean, stdDrift: std,
+    timestamp: new Date().toISOString()
+  });
+}
+
+let driftResults = [];
+
+// ========== TEST 2: KNOWN DISTANCE TRIALS ==========
+let calibrating = false;
+let calibSamples = [];
+let calibTimer = null;
+let baselineSet = false;
+
+let trialActive = false;
+let trialSamples = [];
+let trialStartTime = 0;
+let trials = [];
+
+function calibrateBaseline() {
+  if (!connected) { alert('Connect ESP32 first!'); return; }
+
+  calibrating = true;
+  calibSamples = [];
+  document.getElementById('calibBtn').disabled = true;
+  document.getElementById('trialStatus').textContent = 'Calibrating baseline... hold still 3s';
+  document.getElementById('trialStatus').style.color = '#ffa726';
+
+  let elapsed = 0;
+  calibTimer = setInterval(() => {
+    elapsed++;
+    document.getElementById('trialStatus').textContent = `Calibrating... ${elapsed}/3s (${calibSamples.length} samples)`;
+    if (elapsed >= 3) {
+      clearInterval(calibTimer);
+      finishCalibration();
+    }
+  }, 1000);
+}
+
+function finishCalibration() {
+  calibrating = false;
+  document.getElementById('calibBtn').disabled = false;
+
+  if (calibSamples.length < 10) {
+    document.getElementById('trialStatus').textContent = 'Not enough samples. Try again.';
+    document.getElementById('trialStatus').style.color = '#ef5350';
+    return;
+  }
+
+  // Average accelerometer AND gyroscope across calibration samples
+  let sumAx=0, sumAy=0, sumAz=0, sumGx=0, sumGy=0, sumGz=0;
+  calibSamples.forEach(s => {
+    sumAx += s.ax; sumAy += s.ay; sumAz += s.az;
+    sumGx += s.gx; sumGy += s.gy; sumGz += s.gz;
+  });
+  const n = calibSamples.length;
+  const avgAx = sumAx/n, avgAy = sumAy/n, avgAz = sumAz/n;
+  const avgGx = sumGx/n, avgGy = sumGy/n, avgGz = sumGz/n;
+
+  // Auto-detect gyro units: if bias magnitude is small (<0.3), it's likely radians/sec
+  // Typical gyro bias: rad/s = 0.001-0.05, deg/s = 0.5-5
+  const gyroBiasMag = Math.abs(avgGx) + Math.abs(avgGy) + Math.abs(avgGz);
+  const gyroInRadians = gyroBiasMag < 0.3;
+  console.log(`🎯 Gyro bias magnitude: ${gyroBiasMag.toFixed(4)} → detected as ${gyroInRadians ? 'rad/s' : 'deg/s'}`);
+
+  // Set baseline with averaged gravity vector + gyro bias
+  disp.setBaseline(avgAx, avgAy, avgAz, avgGx, avgGy, avgGz, gyroInRadians);
+  baselineSet = true;
+
+  const gMag = Math.sqrt(avgAx**2 + avgAy**2 + avgAz**2);
+  const gyroUnits = gyroInRadians ? 'rad/s' : '°/s';
+  document.getElementById('calibInfo').style.display = 'block';
+  document.getElementById('calibInfo').innerHTML =
+    `✅ Baseline set from ${n} samples. Gravity=${gMag.toFixed(3)} m/s² | GyroBias: [${avgGx.toFixed(3)}, ${avgGy.toFixed(3)}, ${avgGz.toFixed(3)}] ${gyroUnits}`;
+
+  document.getElementById('trialStartBtn').disabled = false;
+  document.getElementById('trialStatus').textContent = 'Ready — press Start Trial, then move sensor.';
+  document.getElementById('trialStatus').style.color = '#66bb6a';
+
+  // Reset chart
+  chartHistory.labels = []; chartHistory.disp = []; chartHistory.vel = [];
+}
+
+function startTrial() {
+  if (!baselineSet) { alert('Calibrate baseline first!'); return; }
+
+  // Reset displacement for fresh trial
+  disp.velocity = 0;
+  disp.displacement = 0;
+  disp.stillCounter = 0;
+  disp.peakDisplacement = 0;
+  disp.minDisplacement = 0;
+  disp.prevVertAccel = 0;
+
+  trialSamples = [];
+  trialActive = true;
+  trialStartTime = Date.now();
+
+  document.getElementById('trialStartBtn').style.display = 'none';
+  document.getElementById('trialStopBtn').style.display = 'inline-block';
+  document.getElementById('trialStopBtn').disabled = false;
+  document.getElementById('trialStatus').textContent = 'Recording trial... lift & lower sensor, then press Stop.';
+  document.getElementById('trialStatus').style.color = '#f44336';
+
+  // Reset chart
+  chartHistory.labels = []; chartHistory.disp = []; chartHistory.vel = [];
+}
+
+// ========== RETROSPECTIVE CORRECTION (Forward-Backward Integration) ==========
+// After a trial ends, re-process all samples with:
+// 1. Quaternion-based vertical acceleration extraction
+// 2. Acceleration bias estimation & removal from rest segments
+// 3. Light smoothing to reduce noise amplification
+// 4. Forward-backward velocity integration (drift cancellation)
+// 5. Rest-segment velocity zeroing (gyro-assisted)
+// 6. Position integration with linear detrending
+// This approach is speed-invariant and eliminates accumulated drift.
+function retroCorrect(samples) {
+  const g = disp.gravityMag;
+  const n = samples.length;
+  if (n < 5) return null;
+
+  // ====== STEP 1: Extract raw vertical acceleration ======
+  const rawAcc = new Float64Array(n);
+  const dts = new Float64Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const s = samples[i];
+    if (i > 0) {
+      const dt = (s.ts - samples[i - 1].ts) / 1000;
+      dts[i] = (dt > 0 && dt < 0.5) ? dt : 0;
+    }
+    // Quaternion gravity removal: rotate accel to world frame, subtract gravity
+    const q = { w: s.qw, x: s.qx, y: s.qy, z: s.qz };
+    const aw = disp.rotateVecByQuat({ x: s.ax, y: s.ay, z: s.az }, q);
+    rawAcc[i] = aw.z - g;
+  }
+
+  // ====== STEP 2: Detect rest/still segments (accel + gyro) ======
+  const STILL_ACCEL = 0.20;  // m/s² magnitude deviation from gravity
+  const STILL_GYRO = 0.08;   // rad/s combined gyro magnitude
+  const isStill = new Uint8Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const s = samples[i];
+    const aMagDev = Math.abs(Math.sqrt(s.ax ** 2 + s.ay ** 2 + s.az ** 2) - g);
+    const gMag = Math.sqrt(s.gx ** 2 + s.gy ** 2 + s.gz ** 2);
+    const gMagRad = disp.gyroInRadians ? gMag : gMag * disp.DEG2RAD;
+    isStill[i] = (aMagDev < STILL_ACCEL && gMagRad < STILL_GYRO) ? 1 : 0;
+  }
+
+  // Cluster into contiguous rest segments (minimum 2 consecutive samples)
+  const restSegs = [];
+  let rStart = -1;
+  for (let i = 0; i < n; i++) {
+    if (isStill[i]) {
+      if (rStart < 0) rStart = i;
+    } else {
+      if (rStart >= 0 && (i - rStart) >= 2) restSegs.push([rStart, i - 1]);
+      rStart = -1;
+    }
+  }
+  if (rStart >= 0 && (n - rStart) >= 2) restSegs.push([rStart, n - 1]);
+
+  // ====== STEP 3: Estimate & remove acceleration bias from rest periods ======
+  // At rest, vertical acceleration should be exactly 0. Any non-zero mean = systematic bias.
+  let biasSum = 0, biasN = 0;
+  restSegs.forEach(([s, e]) => {
+    for (let i = s; i <= e; i++) { biasSum += rawAcc[i]; biasN++; }
+  });
+  const accBias = biasN > 3 ? biasSum / biasN : 0;
+
+  // ====== STEP 4: Bias removal + light smoothing + noise floor ======
+  const acc = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let a = rawAcc[i] - accBias;
+    // Light 3-point weighted smoothing [1,2,1]/4 (only if enough samples and not at edges)
+    if (n > 10 && i > 0 && i < n - 1) {
+      a = ((rawAcc[i - 1] - accBias) + 2 * a + (rawAcc[i + 1] - accBias)) / 4;
+    }
+    // Force zero at rest segments; apply noise floor elsewhere
+    if (isStill[i]) {
+      a = 0;
+    } else if (Math.abs(a) < 0.05) {
+      a = 0;
+    }
+    acc[i] = a;
+  }
+
+  // ====== STEP 5: Forward-backward velocity integration ======
+  // Forward pass: v_fwd[0] = 0, integrate forward using trapezoidal rule
+  const vFwd = new Float64Array(n);
+  for (let i = 1; i < n; i++) {
+    vFwd[i] = vFwd[i - 1] + (acc[i - 1] + acc[i]) / 2 * dts[i];
+  }
+
+  // Backward pass: v_bwd[n-1] = 0, integrate backward using trapezoidal rule
+  const vBwd = new Float64Array(n);
+  for (let i = n - 2; i >= 0; i--) {
+    vBwd[i] = vBwd[i + 1] - (acc[i] + acc[i + 1]) / 2 * dts[i + 1];
+  }
+
+  // Average forward and backward velocities — drift errors cancel out
+  const vel = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    vel[i] = (vFwd[i] + vBwd[i]) / 2;
+  }
+
+  // Force velocity to 0 in all detected rest segments
+  restSegs.forEach(([s, e]) => {
+    for (let i = s; i <= e; i++) vel[i] = 0;
+  });
+
+  // ====== STEP 6: Integrate position from corrected velocity ======
+  const pos = new Float64Array(n);
+  for (let i = 1; i < n; i++) {
+    pos[i] = pos[i - 1] + (vel[i - 1] + vel[i]) / 2 * dts[i];
+  }
+
+  // ====== STEP 7: Position detrending ======
+  // Enforce position = 0 at first and last rest segment midpoints (start/end at rest)
+  if (restSegs.length >= 2) {
+    const fMid = Math.round((restSegs[0][0] + restSegs[0][1]) / 2);
+    const lMid = Math.round((restSegs[restSegs.length - 1][0] + restSegs[restSegs.length - 1][1]) / 2);
+    if (lMid > fMid) {
+      const p0 = pos[fMid], p1 = pos[lMid];
+      const slope = (p1 - p0) / (lMid - fMid);
+      for (let i = 0; i < n; i++) {
+        pos[i] -= (p0 + slope * (i - fMid));
+      }
+    }
+  } else if (restSegs.length === 1) {
+    // Only one rest segment found — zero position at its midpoint
+    const mid = Math.round((restSegs[0][0] + restSegs[0][1]) / 2);
+    const offset = pos[mid];
+    for (let i = 0; i < n; i++) pos[i] -= offset;
+  }
+
+  // ====== STEP 8: Extract peak & ROM ======
+  let maxD = -Infinity, minD = Infinity;
+  for (let i = 0; i < n; i++) {
+    if (pos[i] > maxD) maxD = pos[i];
+    if (pos[i] < minD) minD = pos[i];
+  }
+
+  const peakAbs = Math.max(Math.abs(maxD), Math.abs(minD));
+  const rom = maxD - minD;
+
+  console.log(`📏 [RetroFwdBwd] bias=${(accBias).toFixed(4)}m/s² restSegs=${restSegs.length} fwdEnd=${vFwd[n-1].toFixed(4)} bwdStart=${vBwd[0].toFixed(4)} peak=${(peakAbs*100).toFixed(1)}cm rom=${(rom*100).toFixed(1)}cm up=${(maxD*100).toFixed(1)} dn=${(minD*100).toFixed(1)}`);
+
+  return {
+    peak: peakAbs * 100,   // cm
+    rom: rom * 100,         // cm
+    maxDisp: maxD * 100,
+    minDisp: minD * 100,
+    positions: Array.from(pos).map(d => d * 100)
+  };
+}
+
+function stopTrial() {
+  trialActive = false;
+  document.getElementById('trialStartBtn').style.display = 'inline-block';
+  document.getElementById('trialStopBtn').style.display = 'none';
+  document.getElementById('trialStopBtn').disabled = true;
+  document.getElementById('trialStatus').textContent = 'Trial saved.';
+  document.getElementById('trialStatus').style.color = '#66bb6a';
+
+  if (trialSamples.length < 5) {
+    alert('Not enough samples. Try again.');
+    return;
+  }
+
+  const expected = parseFloat(document.getElementById('expectedDist').value) || 20;
+  const duration = (Date.now() - trialStartTime) / 1000;
+
+  // ---- Retrospective ZUPT correction for accurate measurement ----
+  const corrected = retroCorrect(trialSamples);
+
+  let peakMeasured, rom;
+  if (corrected) {
+    peakMeasured = corrected.peak;
+    rom = corrected.rom;
+    console.log(`✅ Using retrospective correction: peak=${peakMeasured.toFixed(1)}cm rom=${rom.toFixed(1)}cm`);
+  } else {
+    // Fallback to live values if correction fails
+    const disps = trialSamples.map(s => s.dispCm);
+    peakMeasured = Math.max(...disps.map(Math.abs));
+    rom = Math.max(...disps) - Math.min(...disps);
+    console.log(`⚠️ Retrospective correction failed, using live: peak=${peakMeasured.toFixed(1)}cm`);
+  }
+
+  const error = peakMeasured - expected;
+  const errorPct = (error / expected) * 100;
+
+  const trial = {
+    num: trials.length + 1,
+    expected,
+    peakMeasured,
+    rom,
+    error,
+    errorPct,
+    duration,
+    samples: trialSamples.length,
+    rawSamples: trialSamples.slice(), // keep a copy
+    correctedPositions: corrected ? corrected.positions : null,
+    timestamp: new Date().toISOString()
+  };
+  trials.push(trial);
+  renderTrials();
+}
+
+function renderTrials() {
+  document.getElementById('trialLog').style.display = 'block';
+  const tbody = document.getElementById('trialBody');
+  tbody.innerHTML = '';
+
+  trials.forEach(t => {
+    const absErrPct = Math.abs(t.errorPct);
+    const cls = absErrPct < 10 ? 'good' : absErrPct < 25 ? 'warn' : 'bad';
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${t.num}</td>
+      <td>${t.expected.toFixed(1)}</td>
+      <td>${t.peakMeasured.toFixed(1)}</td>
+      <td>${t.rom.toFixed(1)}</td>
+      <td class="${cls}">${t.error >= 0 ? '+' : ''}${t.error.toFixed(1)}</td>
+      <td class="${cls}">${t.errorPct >= 0 ? '+' : ''}${t.errorPct.toFixed(1)}%</td>
+      <td>${t.duration.toFixed(1)}</td>
+      <td>${t.samples}</td>
+    `;
+    tbody.appendChild(row);
+  });
+
+  // Summary stats
+  if (trials.length >= 2) {
+    document.getElementById('trialSummary').style.display = 'grid';
+    const errors = trials.map(t => t.error);
+    const absErrors = errors.map(Math.abs);
+    const pctErrors = trials.map(t => Math.abs(t.errorPct));
+    const meanErr = errors.reduce((a, b) => a + b, 0) / errors.length;
+    const mae = absErrors.reduce((a, b) => a + b, 0) / absErrors.length;
+    const stdErr = Math.sqrt(errors.reduce((s, v) => s + (v - meanErr) ** 2, 0) / errors.length);
+    const meanPct = pctErrors.reduce((a, b) => a + b, 0) / pctErrors.length;
+    const bestIdx = absErrors.indexOf(Math.min(...absErrors));
+
+    document.getElementById('sumTrials').textContent = trials.length;
+    document.getElementById('sumMeanErr').textContent = (meanErr >= 0 ? '+' : '') + meanErr.toFixed(2) + ' cm';
+    document.getElementById('sumMAE').textContent = mae.toFixed(2) + ' cm';
+    document.getElementById('sumStdErr').textContent = stdErr.toFixed(2) + ' cm';
+    document.getElementById('sumMeanPct').textContent = meanPct.toFixed(1) + '%';
+    document.getElementById('sumBest').textContent = `#${trials[bestIdx].num} (${trials[bestIdx].error >= 0 ? '+' : ''}${trials[bestIdx].error.toFixed(1)} cm)`;
+  }
+}
+
+// ========== EXPORT ==========
+function exportRawCSV() {
+  if (allSamples.length === 0) { alert('No data to export!'); return; }
+
+  const headers = [
+    'rel_ms', 'timestamp_raw',
+    'accel_x', 'accel_y', 'accel_z',
+    'filtered_ax', 'filtered_ay', 'filtered_az',
+    'gyro_x', 'gyro_y', 'gyro_z',
+    'roll', 'pitch', 'yaw',
+    'qw', 'qx', 'qy', 'qz',
+    'displacement_cm', 'velocity_cm_s', 'peak_cm', 'min_cm'
+  ];
+
+  let csv = headers.join(',') + '\n';
+  allSamples.forEach(s => {
+    csv += [
+      s.relMs, s.ts,
+      s.ax.toFixed(4), s.ay.toFixed(4), s.az.toFixed(4),
+      s.fax.toFixed(4), s.fay.toFixed(4), s.faz.toFixed(4),
+      s.gx.toFixed(4), s.gy.toFixed(4), s.gz.toFixed(4),
+      s.roll.toFixed(2), s.pitch.toFixed(2), s.yaw.toFixed(2),
+      s.qw.toFixed(6), s.qx.toFixed(6), s.qy.toFixed(6), s.qz.toFixed(6),
+      s.dispCm.toFixed(3), s.velCmS.toFixed(3), s.peakCm.toFixed(3), s.minCm.toFixed(3)
+    ].join(',') + '\n';
+  });
+
+  download(csv, `vertical_rom_raw_${dateStr()}.csv`, 'text/csv');
+}
+
+function exportTrialsCSV() {
+  if (trials.length === 0 && driftResults.length === 0) { alert('No trials to export!'); return; }
+
+  // Trial results
+  let csv = 'trial,expected_cm,measured_peak_cm,rom_cm,error_cm,error_pct,duration_s,samples,timestamp\n';
+  trials.forEach(t => {
+    csv += [t.num, t.expected.toFixed(1), t.peakMeasured.toFixed(1), t.rom.toFixed(1),
+      t.error.toFixed(2), t.errorPct.toFixed(2), t.duration.toFixed(1), t.samples, t.timestamp
+    ].join(',') + '\n';
+  });
+
+  // Add drift tests as separate section
+  if (driftResults.length > 0) {
+    csv += '\n--- Drift Tests ---\n';
+    csv += 'test,duration_s,samples,max_drift_cm,mean_drift_cm,std_drift_cm,timestamp\n';
+    driftResults.forEach((d, i) => {
+      csv += [i + 1, d.duration, d.samples, d.maxDrift.toFixed(3), d.meanDrift.toFixed(3), d.stdDrift.toFixed(3), d.timestamp].join(',') + '\n';
+    });
+  }
+
+  // Add per-trial raw samples (now includes gyro + corrected displacement)
+  trials.forEach(t => {
+    csv += `\n--- Trial ${t.num} Raw Samples (expected=${t.expected} cm) ---\n`;
+    csv += 'rel_ms,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,qw,qx,qy,qz,live_disp_cm,live_vel_cm_s,corrected_disp_cm\n';
+    t.rawSamples.forEach((s, i) => {
+      const corrDisp = (t.correctedPositions && i < t.correctedPositions.length) ? t.correctedPositions[i].toFixed(3) : '';
+      csv += [s.relMs, s.ax.toFixed(4), s.ay.toFixed(4), s.az.toFixed(4),
+        s.gx.toFixed(4), s.gy.toFixed(4), s.gz.toFixed(4),
+        s.qw.toFixed(6), s.qx.toFixed(6), s.qy.toFixed(6), s.qz.toFixed(6),
+        s.dispCm.toFixed(3), s.velCmS.toFixed(3), corrDisp
+      ].join(',') + '\n';
+    });
+  });
+
+  download(csv, `vertical_rom_trials_${dateStr()}.csv`, 'text/csv');
+}
+
+function exportAllJSON() {
+  const data = {
+    exportDate: new Date().toISOString(),
+    totalSamples: allSamples.length,
+    driftTests: driftResults,
+    trials: trials.map(t => ({
+      ...t,
+      rawSamples: t.rawSamples.length // just count, raw samples are in CSV
+    })),
+    summary: trials.length >= 2 ? computeSummary() : null,
+    config: {
+      noiseFloor: disp.NOISE_FLOOR,
+      zuptThreshold: disp.ZUPT_THRESHOLD,
+      gyroStillRad: disp.GYRO_STILL_RAD,
+      gyroInRadians: disp.gyroInRadians,
+      zuptSamples: disp.ZUPT_SAMPLES,
+      zuptDecay: disp.ZUPT_DECAY,
+      maxDisplacement: disp.MAX_DISP,
+      method: 'quaternion_gravity_removal_with_retrospective_ZUPT'
+    }
+  };
+
+  download(JSON.stringify(data, null, 2), `vertical_rom_test_${dateStr()}.json`, 'application/json');
+}
+
+function computeSummary() {
+  const errors = trials.map(t => t.error);
+  const absErrors = errors.map(Math.abs);
+  const pctErrors = trials.map(t => Math.abs(t.errorPct));
+  const meanErr = errors.reduce((a, b) => a + b, 0) / errors.length;
+  const mae = absErrors.reduce((a, b) => a + b, 0) / absErrors.length;
+  const stdErr = Math.sqrt(errors.reduce((s, v) => s + (v - meanErr) ** 2, 0) / errors.length);
+  const meanPct = pctErrors.reduce((a, b) => a + b, 0) / pctErrors.length;
+  return { trials: trials.length, meanError: meanErr, mae, stdError: stdErr, meanErrorPct: meanPct };
+}
+
+function clearAllData() {
+  if (!confirm('Clear all recorded data and trials?')) return;
+  allSamples = [];
+  trials = [];
+  driftResults = [];
+  driftSamples = [];
+  trialSamples = [];
+  disp.reset();
+  firstTimestamp = null;
+  chartHistory.labels = []; chartHistory.disp = []; chartHistory.vel = [];
+  document.getElementById('trialLog').style.display = 'none';
+  document.getElementById('driftResult').style.display = 'none';
+  document.getElementById('calibInfo').style.display = 'none';
+  document.getElementById('trialSummary').style.display = 'none';
+  document.getElementById('trialStartBtn').disabled = true;
+  baselineSet = false;
+  if (dispChart) { dispChart.data.labels = []; dispChart.data.datasets[0].data = []; dispChart.data.datasets[1].data = []; dispChart.update('none'); }
+  document.getElementById('liveDisp').innerHTML = '0.0 <span style="font-size:0.35em;">cm</span>';
+  document.getElementById('liveVel').textContent = '0.0';
+  document.getElementById('livePeak').textContent = '0.0';
+  document.getElementById('liveMin').textContent = '0.0';
+}
+
+// ========== HELPERS ==========
+function dateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function download(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
