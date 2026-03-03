@@ -320,11 +320,24 @@ export class ROMComputer {
       this.liveFulfillment = Math.min(150, (this.liveRepROM / this.targetROM) * 100);
     }
     
+    // Store RAW sensor data for retrospective correction (retroCorrect)
     this.currentRepData.push({
+      // Raw sensor data (needed for retroCorrect)
+      ax: accelX,
+      ay: accelY,
+      az: accelZ,
+      gx: gyroX,
+      gy: gyroY,
+      gz: gyroZ,
+      qw: q.w,
+      qx: q.x,
+      qy: q.y,
+      qz: q.z,
+      ts: timestamp,
+      // Live integration (for display only)
       displacement: this.liveDisplacementCm,
       velocity: this.velocity,
-      vertAccel: vertAccel,
-      timestamp
+      vertAccel: vertAccel
     });
     
     this.sampleHistory.push({ t: timestamp, v: this.liveRepROM });
@@ -360,13 +373,15 @@ export class ROMComputer {
     
     if (romType === 'angle') {
       romValue = this.computeAngleROM();
+      // For angle ROM, also use within-rep tracking as alternative (take max)
+      const repRangeROM = this.repMaxAngle - this.repMinAngle;
+      romValue = Math.max(romValue, repRangeROM);
     } else {
+      // For stroke ROM, use ONLY retroCorrect - do NOT override with live min/max
+      // The live min/max (repMaxAngle/repMinAngle) drifts significantly;
+      // retroCorrect uses forward-backward integration which cancels drift.
       romValue = this.computeStrokeROM();
     }
-    
-    // Also use within-rep tracking as alternative
-    const repRangeROM = this.repMaxAngle - this.repMinAngle;
-    romValue = Math.max(romValue, repRangeROM);
     
     // Clamp
     romValue = romType === 'angle' ? Math.min(romValue, 360) : Math.min(romValue, 300);
@@ -385,7 +400,9 @@ export class ROMComputer {
       this.displacement = 0;
       this.stillCounter = 0;
       this.peakDisplacement = 0;
-      this.minDisplacement = 0;      this.prevVertAccel = 0;    }
+      this.minDisplacement = 0;
+      this.prevVertAccel = 0;
+    }
     
     const unit = romType === 'angle' ? '°' : ' cm';
     console.log(`[ROMComputer] Calibration rep ROM: ${romValue.toFixed(1)}${unit}`);
@@ -419,14 +436,14 @@ export class ROMComputer {
     
     if (romType === 'angle') {
       romValue = this.computeAngleROM();
+      // For angle ROM, also use within-rep (max-min) tracking
+      const repRangeROM = this.repMaxAngle - this.repMinAngle;
+      if (isFinite(repRangeROM)) {
+        romValue = Math.max(romValue, repRangeROM);
+      }
     } else {
+      // For stroke ROM, use ONLY retroCorrect (live min/max drifts)
       romValue = this.computeStrokeROM();
-    }
-    
-    // Also use within-rep (max-min) tracking
-    const repRangeROM = this.repMaxAngle - this.repMinAngle;
-    if (isFinite(repRangeROM)) {
-      romValue = Math.max(romValue, repRangeROM);
     }
     
     // Clamp unrealistic values
@@ -485,8 +502,202 @@ export class ROMComputer {
   
   computeStrokeROM() {
     if (this.currentRepData.length < 3) return 0;
+    
+    // Use retrospective forward-backward integration for accurate ROM
+    // This eliminates accumulated drift that live integration suffers from
+    const corrected = this.retroCorrect(this.currentRepData);
+    
+    if (corrected && corrected.rom > 0) {
+      console.log(`📏 [ROM] RetroCorrect: ROM=${corrected.rom.toFixed(1)}cm peak=${corrected.peak.toFixed(1)}cm`);
+      return corrected.rom;
+    }
+    
+    // Fallback to live integration if retroCorrect fails
     const disp = this.currentRepData.map(d => d.displacement);
     return Math.max(...disp) - Math.min(...disp);
+  }
+  
+  // ========== RETROSPECTIVE CORRECTION (Forward-Backward Integration) ==========
+  // After a rep ends, re-process all samples with:
+  // 1. Quaternion-based vertical acceleration extraction
+  // 2. Acceleration bias estimation & removal from rest segments
+  // 3. Light smoothing to reduce noise amplification
+  // 4. Forward-backward velocity integration (drift cancellation)
+  // 5. Velocity detrending for complete reps
+  // 6. Rest-segment velocity zeroing (gyro-assisted)
+  // 7. Position integration with linear detrending
+  // This approach is speed-invariant and eliminates accumulated drift.
+  retroCorrect(samples, isComplete = true) {
+    const g = this.gravityMag;
+    const n = samples.length;
+    if (n < 5) return null;
+    
+    // ====== STEP 1: Extract raw vertical acceleration ======
+    const rawAcc = new Float64Array(n);
+    const dts = new Float64Array(n);
+    
+    for (let i = 0; i < n; i++) {
+      const s = samples[i];
+      if (i > 0) {
+        const dt = (s.ts - samples[i - 1].ts) / 1000;
+        dts[i] = (dt > 0 && dt < 0.5) ? dt : 0;
+      }
+      const q = { w: s.qw, x: s.qx, y: s.qy, z: s.qz };
+      const aw = this.rotateVector({ x: s.ax, y: s.ay, z: s.az }, q);
+      rawAcc[i] = aw.z - g;
+    }
+    
+    // ====== STEP 2: Detect rest/still segments (accel + gyro) ======
+    const STILL_ACCEL = 0.25;  // m/s² (relaxed for better rest detection with hand vibration)
+    const STILL_GYRO = 0.10;   // rad/s (relaxed to catch more rest samples)
+    const isStill = new Uint8Array(n);
+    
+    for (let i = 0; i < n; i++) {
+      const s = samples[i];
+      const aMagDev = Math.abs(Math.sqrt(s.ax ** 2 + s.ay ** 2 + s.az ** 2) - g);
+      const gMag = Math.sqrt(s.gx ** 2 + s.gy ** 2 + s.gz ** 2);
+      const gMagRad = this.gyroInRadians ? gMag : gMag * this.DEG2RAD;
+      isStill[i] = (aMagDev < STILL_ACCEL && gMagRad < STILL_GYRO) ? 1 : 0;
+    }
+    
+    const restSegs = [];
+    let rStart = -1;
+    for (let i = 0; i < n; i++) {
+      if (isStill[i]) {
+        if (rStart < 0) rStart = i;
+      } else {
+        if (rStart >= 0 && (i - rStart) >= 2) restSegs.push([rStart, i - 1]);
+        rStart = -1;
+      }
+    }
+    if (rStart >= 0 && (n - rStart) >= 2) restSegs.push([rStart, n - 1]);
+    
+    // ====== STEP 3: Estimate & remove acceleration bias ======
+    let biasSum = 0, biasN = 0;
+    restSegs.forEach(([s, e]) => {
+      for (let i = s; i <= e; i++) { biasSum += rawAcc[i]; biasN++; }
+    });
+    let accBias;
+    if (biasN > 5) {
+      accBias = biasSum / biasN;
+    } else {
+      let fullSum = 0;
+      for (let i = 0; i < n; i++) fullSum += rawAcc[i];
+      accBias = fullSum / n;
+    }
+    
+    // ====== STEP 4: Bias removal + light smoothing + noise floor ======
+    const acc = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let a = rawAcc[i] - accBias;
+      if (n > 10 && i > 0 && i < n - 1) {
+        a = ((rawAcc[i - 1] - accBias) + 2 * a + (rawAcc[i + 1] - accBias)) / 4;
+      }
+      if (isStill[i]) {
+        a = 0;
+      } else if (Math.abs(a) < 0.05) {
+        a = 0;
+      }
+      acc[i] = a;
+    }
+    
+    // ====== STEP 5: Forward-backward velocity integration ======
+    const vFwd = new Float64Array(n);
+    for (let i = 1; i < n; i++) {
+      vFwd[i] = vFwd[i - 1] + (acc[i - 1] + acc[i]) / 2 * dts[i];
+    }
+    const vBwd = new Float64Array(n);
+    for (let i = n - 2; i >= 0; i--) {
+      vBwd[i] = vBwd[i + 1] - (acc[i] + acc[i + 1]) / 2 * dts[i + 1];
+    }
+    const vel = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      vel[i] = (vFwd[i] + vBwd[i]) / 2;
+    }
+    
+    // ====== STEP 5b: Velocity detrending (complete reps only) ======
+    if (isComplete && n > 10) {
+      const edgeSamples = Math.min(5, Math.floor(n / 4));
+      let vStartSum = 0, vEndSum = 0;
+      for (let i = 0; i < edgeSamples; i++) vStartSum += vel[i];
+      for (let i = n - edgeSamples; i < n; i++) vEndSum += vel[i];
+      const vStart = vStartSum / edgeSamples;
+      const vEnd = vEndSum / edgeSamples;
+      const vSlope = (vEnd - vStart) / (n - 1);
+      for (let i = 0; i < n; i++) {
+        vel[i] -= (vStart + vSlope * i);
+      }
+    }
+    
+    // Force velocity to 0 in rest segments
+    restSegs.forEach(([s, e]) => {
+      for (let i = s; i <= e; i++) vel[i] = 0;
+    });
+    
+    // ====== STEP 6: Integrate position ======
+    const pos = new Float64Array(n);
+    for (let i = 1; i < n; i++) {
+      pos[i] = pos[i - 1] + (vel[i - 1] + vel[i]) / 2 * dts[i];
+    }
+    
+    // ====== STEP 7: Position detrending ======
+    if (restSegs.length >= 2) {
+      const fMid = Math.round((restSegs[0][0] + restSegs[0][1]) / 2);
+      const lMid = Math.round((restSegs[restSegs.length - 1][0] + restSegs[restSegs.length - 1][1]) / 2);
+      if (lMid > fMid) {
+        const p0 = pos[fMid], p1 = pos[lMid];
+        const slope = (p1 - p0) / (lMid - fMid);
+        for (let i = 0; i < n; i++) {
+          pos[i] -= (p0 + slope * (i - fMid));
+        }
+      }
+    } else if (restSegs.length === 1) {
+      const mid = Math.round((restSegs[0][0] + restSegs[0][1]) / 2);
+      if (isComplete) {
+        const restIsNearStart = mid < n / 2;
+        const anchor1 = restIsNearStart ? mid : 0;
+        const anchor2 = restIsNearStart ? n - 1 : mid;
+        const p0 = pos[anchor1], p1 = pos[anchor2];
+        const span = anchor2 - anchor1;
+        if (span > 0) {
+          const slope = (p1 - p0) / span;
+          for (let i = 0; i < n; i++) {
+            pos[i] -= (p0 + slope * (i - anchor1));
+          }
+        }
+      } else {
+        const offset = pos[mid];
+        for (let i = 0; i < n; i++) pos[i] -= offset;
+      }
+    } else {
+      console.log('⚠️ [RetroCorrect] No rest segments detected — using linear detrend fallback');
+      const p0 = pos[0], p1 = pos[n - 1];
+      const slope = (p1 - p0) / (n - 1);
+      for (let i = 0; i < n; i++) {
+        pos[i] -= (p0 + slope * i);
+      }
+    }
+    
+    // ====== STEP 8: Extract peak & ROM ======
+    let maxD = -Infinity, minD = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (pos[i] > maxD) maxD = pos[i];
+      if (pos[i] < minD) minD = pos[i];
+    }
+    
+    const peakAbs = Math.max(Math.abs(maxD), Math.abs(minD));
+    const rom = maxD - minD;
+    
+    if (this.DEBUG_MODE) {
+      console.log(`📏 [RetroCorrect] bias=${(accBias).toFixed(4)}m/s² restSegs=${restSegs.length} peak=${(peakAbs*100).toFixed(1)}cm rom=${(rom*100).toFixed(1)}cm complete=${isComplete}`);
+    }
+    
+    return {
+      peak: peakAbs * 100,
+      rom: rom * 100,
+      maxDisp: maxD * 100,
+      minDisp: minD * 100
+    };
   }
   
   getSetStats() {

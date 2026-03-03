@@ -494,6 +494,24 @@
         <p>Consistency: <span class="value" id="rom-consistency">--</span></p>
       </div>
       
+      <div class="data-card" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 2px solid #e67e22;">
+        <h3 style="color: #e67e22;">📐 Live Angular ROM</h3>
+        <p style="color: #ddd;">Angle: <span class="value" id="live-angle-rom" style="color: #e67e22; font-size: 24px;">--</span>°</p>
+        <p style="color: #ddd;">Rep ROM: <span class="value" id="live-rep-angle-rom" style="color: #f39c12;">--</span>°</p>
+        <p style="color: #ddd;">Min: <span class="value" id="live-angle-min" style="color: #3498db;">--</span>° | Max: <span class="value" id="live-angle-max" style="color: #e74c3c;">--</span>°</p>
+        <p style="color: #ddd;">Fulfillment: <span class="value" id="live-angle-fulfillment" style="color: #2ecc71;">--</span>%</p>
+        <p style="font-size: 10px; color: #888; margin-top: 5px;">Quaternion-based angle from baseline</p>
+      </div>
+      
+      <div class="data-card" style="background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 100%); border: 2px solid #9b59b6;">
+        <h3 style="color: #9b59b6;">📏 Live Stroke ROM</h3>
+        <p style="color: #ddd;">Displacement: <span class="value" id="live-stroke-rom" style="color: #9b59b6; font-size: 24px;">--</span> cm</p>
+        <p style="color: #ddd;">Rep ROM: <span class="value" id="live-rep-stroke-rom" style="color: #8e44ad;">--</span> cm</p>
+        <p style="color: #ddd;">Velocity: <span class="value" id="live-stroke-velocity" style="color: #3498db;">--</span> cm/s</p>
+        <p style="color: #ddd;">Peak: <span class="value" id="live-stroke-peak" style="color: #e74c3c;">--</span> cm</p>
+        <p style="font-size: 10px; color: #888; margin-top: 5px;">Double-integration with ZUPT</p>
+      </div>
+      
       <div class="data-card">
         <h3>Connection</h3>
         <p>Status: <span class="value" id="connection-status">Disconnected</span></p>
@@ -1236,9 +1254,21 @@
         }
         
         this.currentRepData.push({
+          // Raw sensor data (needed for retroCorrect)
+          ax: accelX,
+          ay: accelY,
+          az: accelZ,
+          gx: gyroX,
+          gy: gyroY,
+          gz: gyroZ,
+          qw: q.w,
+          qx: q.x,
+          qy: q.y,
+          qz: q.z,
+          ts: timestamp,
+          // Live integration (for display only)
           displacement: this.liveDisplacementCm,
-          velocity: this.velocity,
-          timestamp
+          velocity: this.velocity
         });
         
         // Update live chart history
@@ -1327,13 +1357,13 @@
         
         if (romType === 'angle') {
           romValue = this.computeAngleROM();
+          // For angle ROM, also use within-rep tracking as alternative (take max)
+          const repRangeROM = this.repMaxAngle - this.repMinAngle;
+          romValue = Math.max(romValue, repRangeROM);
         } else {
+          // For stroke ROM, use ONLY retroCorrect (live min/max drifts)
           romValue = this.computeStrokeROM();
         }
-        
-        // Also use within-rep tracking as alternative
-        const repRangeROM = this.repMaxAngle - this.repMinAngle;
-        romValue = Math.max(romValue, repRangeROM);
         
         // Clamp
         romValue = romType === 'angle' ? Math.min(romValue, 360) : Math.min(romValue, 300);
@@ -1431,8 +1461,147 @@
       
       computeStrokeROM() {
         if (this.currentRepData.length < 3) return 0;
+        
+        // Use retrospective forward-backward integration for accurate ROM
+        const corrected = this.retroCorrect(this.currentRepData);
+        
+        if (corrected && corrected.rom > 0) {
+          console.log(`📏 [ROM] RetroCorrect: ROM=${corrected.rom.toFixed(1)}cm peak=${corrected.peak.toFixed(1)}cm`);
+          return corrected.rom;
+        }
+        
+        // Fallback to live integration if retroCorrect fails
         const disp = this.currentRepData.map(d => d.displacement);
         return Math.max(...disp) - Math.min(...disp);
+      }
+      
+      // ========== RETROSPECTIVE CORRECTION (Forward-Backward Integration) ==========
+      retroCorrect(samples, isComplete = true) {
+        const g = this.gravityMag;
+        const n = samples.length;
+        if (n < 5) return null;
+        
+        const rawAcc = new Float64Array(n);
+        const dts = new Float64Array(n);
+        
+        for (let i = 0; i < n; i++) {
+          const s = samples[i];
+          if (i > 0) {
+            const dt = (s.ts - samples[i - 1].ts) / 1000;
+            dts[i] = (dt > 0 && dt < 0.5) ? dt : 0;
+          }
+          const q = { w: s.qw, x: s.qx, y: s.qy, z: s.qz };
+          const aw = this.rotateVector({ x: s.ax, y: s.ay, z: s.az }, q);
+          rawAcc[i] = aw.z - g;
+        }
+        
+        const STILL_ACCEL = 0.25;
+        const STILL_GYRO = 0.10;
+        const isStill = new Uint8Array(n);
+        for (let i = 0; i < n; i++) {
+          const s = samples[i];
+          const aMagDev = Math.abs(Math.sqrt(s.ax ** 2 + s.ay ** 2 + s.az ** 2) - g);
+          const gMag = Math.sqrt(s.gx ** 2 + s.gy ** 2 + s.gz ** 2);
+          const gMagRad = this.gyroInRadians ? gMag : gMag * this.DEG2RAD;
+          isStill[i] = (aMagDev < STILL_ACCEL && gMagRad < STILL_GYRO) ? 1 : 0;
+        }
+        
+        const restSegs = [];
+        let rStart = -1;
+        for (let i = 0; i < n; i++) {
+          if (isStill[i]) {
+            if (rStart < 0) rStart = i;
+          } else {
+            if (rStart >= 0 && (i - rStart) >= 2) restSegs.push([rStart, i - 1]);
+            rStart = -1;
+          }
+        }
+        if (rStart >= 0 && (n - rStart) >= 2) restSegs.push([rStart, n - 1]);
+        
+        let biasSum = 0, biasN = 0;
+        restSegs.forEach(([s, e]) => {
+          for (let i = s; i <= e; i++) { biasSum += rawAcc[i]; biasN++; }
+        });
+        let accBias;
+        if (biasN > 5) {
+          accBias = biasSum / biasN;
+        } else {
+          let fullSum = 0;
+          for (let i = 0; i < n; i++) fullSum += rawAcc[i];
+          accBias = fullSum / n;
+        }
+        
+        const acc = new Float64Array(n);
+        for (let i = 0; i < n; i++) {
+          let a = rawAcc[i] - accBias;
+          if (n > 10 && i > 0 && i < n - 1) {
+            a = ((rawAcc[i - 1] - accBias) + 2 * a + (rawAcc[i + 1] - accBias)) / 4;
+          }
+          if (isStill[i]) { a = 0; } else if (Math.abs(a) < 0.05) { a = 0; }
+          acc[i] = a;
+        }
+        
+        const vFwd = new Float64Array(n);
+        for (let i = 1; i < n; i++) vFwd[i] = vFwd[i - 1] + (acc[i - 1] + acc[i]) / 2 * dts[i];
+        const vBwd = new Float64Array(n);
+        for (let i = n - 2; i >= 0; i--) vBwd[i] = vBwd[i + 1] - (acc[i] + acc[i + 1]) / 2 * dts[i + 1];
+        const vel = new Float64Array(n);
+        for (let i = 0; i < n; i++) vel[i] = (vFwd[i] + vBwd[i]) / 2;
+        
+        if (isComplete && n > 10) {
+          const edgeSamples = Math.min(5, Math.floor(n / 4));
+          let vStartSum = 0, vEndSum = 0;
+          for (let i = 0; i < edgeSamples; i++) vStartSum += vel[i];
+          for (let i = n - edgeSamples; i < n; i++) vEndSum += vel[i];
+          const vStart = vStartSum / edgeSamples;
+          const vEnd = vEndSum / edgeSamples;
+          const vSlope = (vEnd - vStart) / (n - 1);
+          for (let i = 0; i < n; i++) vel[i] -= (vStart + vSlope * i);
+        }
+        
+        restSegs.forEach(([s, e]) => { for (let i = s; i <= e; i++) vel[i] = 0; });
+        
+        const pos = new Float64Array(n);
+        for (let i = 1; i < n; i++) pos[i] = pos[i - 1] + (vel[i - 1] + vel[i]) / 2 * dts[i];
+        
+        if (restSegs.length >= 2) {
+          const fMid = Math.round((restSegs[0][0] + restSegs[0][1]) / 2);
+          const lMid = Math.round((restSegs[restSegs.length - 1][0] + restSegs[restSegs.length - 1][1]) / 2);
+          if (lMid > fMid) {
+            const p0 = pos[fMid], p1 = pos[lMid];
+            const slope = (p1 - p0) / (lMid - fMid);
+            for (let i = 0; i < n; i++) pos[i] -= (p0 + slope * (i - fMid));
+          }
+        } else if (restSegs.length === 1) {
+          const mid = Math.round((restSegs[0][0] + restSegs[0][1]) / 2);
+          if (isComplete) {
+            const restIsNearStart = mid < n / 2;
+            const anchor1 = restIsNearStart ? mid : 0;
+            const anchor2 = restIsNearStart ? n - 1 : mid;
+            const p0 = pos[anchor1], p1 = pos[anchor2];
+            const span = anchor2 - anchor1;
+            if (span > 0) {
+              const slope = (p1 - p0) / span;
+              for (let i = 0; i < n; i++) pos[i] -= (p0 + slope * (i - anchor1));
+            }
+          } else {
+            const offset = pos[mid];
+            for (let i = 0; i < n; i++) pos[i] -= offset;
+          }
+        } else {
+          const p0 = pos[0], p1 = pos[n - 1];
+          const slope = (p1 - p0) / (n - 1);
+          for (let i = 0; i < n; i++) pos[i] -= (p0 + slope * i);
+        }
+        
+        let maxD = -Infinity, minD = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (pos[i] > maxD) maxD = pos[i];
+          if (pos[i] < minD) minD = pos[i];
+        }
+        const peakAbs = Math.max(Math.abs(maxD), Math.abs(minD));
+        const rom = maxD - minD;
+        return { peak: peakAbs * 100, rom: rom * 100, maxDisp: maxD * 100, minDisp: minD * 100 };
       }
       
       getSetStats() {
@@ -2626,6 +2795,26 @@
       
       // Update current roll for calibration
       currentRoll = data.roll;
+      
+      // *** Always update Live ROM displays (even when not recording) ***
+      if (typeof romComputer !== 'undefined') {
+        // Live Angular ROM Display
+        const liveAngleEl = document.getElementById('live-angle-rom');
+        const liveStrokeEl = document.getElementById('live-stroke-rom');
+        const liveStrokeVelEl = document.getElementById('live-stroke-velocity');
+        
+        if (liveAngleEl) {
+          liveAngleEl.textContent = romComputer.liveAngleDeg.toFixed(1);
+        }
+        if (liveStrokeEl) {
+          const displacementCm = Math.abs(romComputer.displacement) * 100;
+          liveStrokeEl.textContent = displacementCm.toFixed(1);
+        }
+        if (liveStrokeVelEl) {
+          const velocityCmS = Math.abs(romComputer.velocity) * 100;
+          liveStrokeVelEl.textContent = velocityCmS.toFixed(1);
+        }
+      }
     }
     
     function updateRepStats() {
@@ -2691,6 +2880,58 @@
             document.getElementById('rom-consistency').textContent = stats.romConsistencyPercent.toFixed(0) + '%';
           }
         }
+        
+        // *** Live Angular ROM Display ***
+        const liveAngleEl = document.getElementById('live-angle-rom');
+        const liveRepAngleEl = document.getElementById('live-rep-angle-rom');
+        const liveAngleMinEl = document.getElementById('live-angle-min');
+        const liveAngleMaxEl = document.getElementById('live-angle-max');
+        const liveAngleFulfillEl = document.getElementById('live-angle-fulfillment');
+        
+        if (liveAngleEl) {
+          liveAngleEl.textContent = romComputer.liveAngleDeg.toFixed(1);
+        }
+        if (liveRepAngleEl) {
+          liveRepAngleEl.textContent = romComputer.liveRepROM.toFixed(1);
+        }
+        if (liveAngleMinEl && romComputer.repMinAngle !== Infinity) {
+          liveAngleMinEl.textContent = romComputer.repMinAngle.toFixed(1);
+        }
+        if (liveAngleMaxEl && romComputer.repMaxAngle !== -Infinity) {
+          liveAngleMaxEl.textContent = romComputer.repMaxAngle.toFixed(1);
+        }
+        if (liveAngleFulfillEl) {
+          const fulfillment = romComputer.liveFulfillment || 0;
+          liveAngleFulfillEl.textContent = fulfillment.toFixed(0);
+          // Color code fulfillment
+          liveAngleFulfillEl.style.color = fulfillment >= 90 ? '#2ecc71' : fulfillment >= 70 ? '#f39c12' : '#e74c3c';
+        }
+        
+        // *** Live Stroke ROM Display ***
+        const liveStrokeEl = document.getElementById('live-stroke-rom');
+        const liveRepStrokeEl = document.getElementById('live-rep-stroke-rom');
+        const liveStrokeVelEl = document.getElementById('live-stroke-velocity');
+        const liveStrokePeakEl = document.getElementById('live-stroke-peak');
+        
+        if (liveStrokeEl) {
+          // Convert displacement from meters to cm
+          const displacementCm = Math.abs(romComputer.displacement) * 100;
+          liveStrokeEl.textContent = displacementCm.toFixed(1);
+        }
+        if (liveRepStrokeEl) {
+          // Rep ROM is max - min displacement for stroke exercises
+          const strokeRepROM = (romComputer.peakDisplacement - romComputer.minDisplacement) * 100;
+          liveRepStrokeEl.textContent = Math.abs(strokeRepROM).toFixed(1);
+        }
+        if (liveStrokeVelEl) {
+          // Velocity in cm/s
+          const velocityCmS = Math.abs(romComputer.velocity) * 100;
+          liveStrokeVelEl.textContent = velocityCmS.toFixed(1);
+        }
+        if (liveStrokePeakEl) {
+          const peakCm = Math.abs(romComputer.peakDisplacement) * 100;
+          liveStrokePeakEl.textContent = peakCm.toFixed(1);
+        }
       }
     }
     
@@ -2717,6 +2958,20 @@
       document.getElementById('rom-avg').textContent = '--';
       document.getElementById('rom-max').textContent = '--';
       document.getElementById('rom-consistency').textContent = '--';
+      
+      // Reset Live Angular ROM display
+      document.getElementById('live-angle-rom').textContent = '--';
+      document.getElementById('live-rep-angle-rom').textContent = '--';
+      document.getElementById('live-angle-min').textContent = '--';
+      document.getElementById('live-angle-max').textContent = '--';
+      document.getElementById('live-angle-fulfillment').textContent = '--';
+      
+      // Reset Live Stroke ROM display
+      document.getElementById('live-stroke-rom').textContent = '--';
+      document.getElementById('live-rep-stroke-rom').textContent = '--';
+      document.getElementById('live-stroke-velocity').textContent = '--';
+      document.getElementById('live-stroke-peak').textContent = '--';
+      
       console.log('🔄 Rep counter reset');
     }
     

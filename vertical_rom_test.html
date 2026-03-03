@@ -775,8 +775,8 @@ function retroCorrect(samples) {
   }
 
   // ====== STEP 2: Detect rest/still segments (accel + gyro) ======
-  const STILL_ACCEL = 0.20;  // m/s² magnitude deviation from gravity
-  const STILL_GYRO = 0.08;   // rad/s combined gyro magnitude
+  const STILL_ACCEL = 0.25;  // m/s² (relaxed for better rest detection with hand vibration)
+  const STILL_GYRO = 0.10;   // rad/s (relaxed to catch more rest samples)
   const isStill = new Uint8Array(n);
 
   for (let i = 0; i < n; i++) {
@@ -801,12 +801,19 @@ function retroCorrect(samples) {
   if (rStart >= 0 && (n - rStart) >= 2) restSegs.push([rStart, n - 1]);
 
   // ====== STEP 3: Estimate & remove acceleration bias from rest periods ======
-  // At rest, vertical acceleration should be exactly 0. Any non-zero mean = systematic bias.
   let biasSum = 0, biasN = 0;
   restSegs.forEach(([s, e]) => {
     for (let i = s; i <= e; i++) { biasSum += rawAcc[i]; biasN++; }
   });
-  const accBias = biasN > 3 ? biasSum / biasN : 0;
+  // Fallback: for a complete rep (returns to start), mean acceleration ≈ 0
+  let accBias;
+  if (biasN > 5) {
+    accBias = biasSum / biasN;
+  } else {
+    let fullSum = 0;
+    for (let i = 0; i < n; i++) fullSum += rawAcc[i];
+    accBias = fullSum / n;
+  }
 
   // ====== STEP 4: Bias removal + light smoothing + noise floor ======
   const acc = new Float64Array(n);
@@ -844,6 +851,22 @@ function retroCorrect(samples) {
     vel[i] = (vFwd[i] + vBwd[i]) / 2;
   }
 
+  // ====== STEP 5b: Velocity detrending ======
+  // Residual linear velocity drift integrates into quadratic position drift.
+  // For a complete trial (start and end at rest), velocity at both boundaries ≈ 0.
+  if (n > 10) {
+    const edgeSamples = Math.min(5, Math.floor(n / 4));
+    let vStartSum = 0, vEndSum = 0;
+    for (let i = 0; i < edgeSamples; i++) vStartSum += vel[i];
+    for (let i = n - edgeSamples; i < n; i++) vEndSum += vel[i];
+    const vStart = vStartSum / edgeSamples;
+    const vEnd = vEndSum / edgeSamples;
+    const vSlope = (vEnd - vStart) / (n - 1);
+    for (let i = 0; i < n; i++) {
+      vel[i] -= (vStart + vSlope * i);
+    }
+  }
+
   // Force velocity to 0 in all detected rest segments
   restSegs.forEach(([s, e]) => {
     for (let i = s; i <= e; i++) vel[i] = 0;
@@ -868,10 +891,27 @@ function retroCorrect(samples) {
       }
     }
   } else if (restSegs.length === 1) {
-    // Only one rest segment found — zero position at its midpoint
+    // Linear detrend: rest anchor ↔ opposite signal boundary
     const mid = Math.round((restSegs[0][0] + restSegs[0][1]) / 2);
-    const offset = pos[mid];
-    for (let i = 0; i < n; i++) pos[i] -= offset;
+    const restIsNearStart = mid < n / 2;
+    const anchor1 = restIsNearStart ? mid : 0;
+    const anchor2 = restIsNearStart ? n - 1 : mid;
+    const p0 = pos[anchor1], p1 = pos[anchor2];
+    const span = anchor2 - anchor1;
+    if (span > 0) {
+      const slope = (p1 - p0) / span;
+      for (let i = 0; i < n; i++) {
+        pos[i] -= (p0 + slope * (i - anchor1));
+      }
+    }
+  } else {
+    // No rest segments — linear detrend from start to end
+    console.log('⚠️ [RetroCorrect] No rest segments detected — using linear detrend fallback');
+    const p0 = pos[0], p1 = pos[n - 1];
+    const slope = (p1 - p0) / (n - 1);
+    for (let i = 0; i < n; i++) {
+      pos[i] -= (p0 + slope * i);
+    }
   }
 
   // ====== STEP 8: Extract peak & ROM ======
