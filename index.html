@@ -494,12 +494,13 @@
         <p>Consistency: <span class="value" id="rom-consistency">--</span></p>
       </div>
       
-      <div class="data-card" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 2px solid #e67e22;">
+      <div class="data-card" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 2px solid #e67e22; text-align: center;">
         <h3 style="color: #e67e22;">📐 Live Angular ROM</h3>
-        <p style="color: #ddd;">Angle: <span class="value" id="live-angle-rom" style="color: #e67e22; font-size: 24px;">--</span>°</p>
-        <p style="color: #ddd;">Rep ROM: <span class="value" id="live-rep-angle-rom" style="color: #f39c12;">--</span>°</p>
-        <p style="color: #ddd;">Min: <span class="value" id="live-angle-min" style="color: #3498db;">--</span>° | Max: <span class="value" id="live-angle-max" style="color: #e74c3c;">--</span>°</p>
-        <p style="color: #ddd;">Fulfillment: <span class="value" id="live-angle-fulfillment" style="color: #2ecc71;">--</span>%</p>
+        <p style="margin: 4px 0 2px 0;"><span class="value" id="live-angle-rom" style="color: #e67e22; font-size: clamp(36px, 8vw, 56px); font-weight: bold; line-height: 1; text-shadow: 0 2px 6px rgba(230,126,34,0.4);">--</span><span style="color: #e67e22; font-size: 20px;">°</span></p>
+        <p style="color: #aaa; font-size: 11px; margin: 0 0 8px 0;">ANGLE</p>
+        <p style="color: #ddd; font-size: 12px;">Rep ROM: <span class="value" id="live-rep-angle-rom" style="color: #f39c12;">--</span>°</p>
+        <p style="color: #ddd; font-size: 12px;">Min: <span class="value" id="live-angle-min" style="color: #3498db;">--</span>° | Max: <span class="value" id="live-angle-max" style="color: #e74c3c;">--</span>°</p>
+        <p style="color: #ddd; font-size: 12px;">Fulfillment: <span class="value" id="live-angle-fulfillment" style="color: #2ecc71;">--</span>%</p>
         <p style="font-size: 10px; color: #888; margin-top: 5px;">Quaternion-based angle from baseline</p>
       </div>
       
@@ -1752,7 +1753,7 @@
           
           <!-- Live Value -->
           <div style="background: linear-gradient(135deg, #e67e22 0%, #d35400 100%); border-radius: 15px; padding: 20px; text-align: center; margin-bottom: 12px;">
-            <div style="font-size: 13px; opacity: 0.9; margin-bottom: 4px;">Live Rep ROM (max − min within rep)</div>
+            <div style="font-size: 13px; opacity: 0.9; margin-bottom: 4px;">Live Angle (from baseline)</div>
             <div id="rom-test-live" style="font-size: clamp(40px, 10vw, 60px); font-weight: bold; line-height: 1;">
               0.0<span style="font-size: 0.4em;">${unit}</span>
             </div>
@@ -1771,7 +1772,7 @@
               ⚠️ Not calibrated — press "🎯 Calibrate" and do 1 full-range rep
             </div>
             <div style="display: flex; justify-content: center; gap: 30px; margin-top: 10px; font-size: 13px;">
-              <span>Angle: <span id="rom-test-quat" style="color: #ffeaa7;">--</span></span>
+              <span>Rep ROM: <span id="rom-test-quat" style="color: #ffeaa7;">--</span></span>
               <span>Norm: <span id="rom-test-norm" style="color: #ffeaa7;">--</span></span>
               ${romType === 'stroke' ? '<span>Vel: <span id="rom-test-vel" style="color: #ffeaa7;">0</span> cm/s</span>' : ''}
             </div>
@@ -1857,19 +1858,20 @@
       
       const romType = romComputer.getROMType(selectedExercise);
       const unit = romType === 'angle' ? '°' : ' cm';
-      const liveValue = romComputer.liveRepROM; // within-rep range (max-min)
+      const liveAngle = romComputer.liveAngleDeg; // current angle from baseline
+      const liveRepROMVal = romComputer.liveRepROM; // within-rep range (max-min)
       
-      // Update live value (show rep ROM, not absolute angle)
+      // Update live value (show angle, not rep ROM)
       const liveEl = document.getElementById('rom-test-live');
       if (liveEl && !romCalibrating && !romComputer.isCalibrationRep) {
-        liveEl.innerHTML = `${liveValue.toFixed(1)}<span style="font-size: 0.4em;">${unit}</span>`;
+        liveEl.innerHTML = `${liveAngle.toFixed(1)}<span style="font-size: 0.4em;">${unit}</span>`;
       }
       
-      // Update quaternion/angle display
+      // Update Rep ROM secondary display
       const quatEl = document.getElementById('rom-test-quat');
       const normEl = document.getElementById('rom-test-norm');
       if (quatEl) {
-        quatEl.textContent = `${romComputer.liveAngleDeg.toFixed(1)}°`;
+        quatEl.textContent = `${liveRepROMVal.toFixed(1)}${unit}`;
       }
       
       // Update fulfillment bar
