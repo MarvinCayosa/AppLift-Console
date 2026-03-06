@@ -772,56 +772,21 @@
             // - beta: rotation around X axis (-180 to 180) - front/back tilt / pitch
             // - gamma: rotation around Y axis (-90 to 90) - left/right tilt / roll
             
-            // Map to our convention (matching ESP32 output)
-            phoneData.yaw = event.alpha || 0;      // Compass heading
-            phoneData.pitch = event.beta || 0;     // Front/back tilt
-            phoneData.roll = event.gamma || 0;     // Left/right tilt
-            
-            // Compute quaternion from Euler angles (ZXY convention for device orientation)
-            const alpha = (event.alpha || 0) * (Math.PI / 180); // yaw
-            const beta  = (event.beta  || 0) * (Math.PI / 180); // pitch
-            const gamma = (event.gamma || 0) * (Math.PI / 180); // roll
-            
-            const cA = Math.cos(alpha / 2), sA = Math.sin(alpha / 2);
-            const cB = Math.cos(beta  / 2), sB = Math.sin(beta  / 2);
-            const cG = Math.cos(gamma / 2), sG = Math.sin(gamma / 2);
-            
-            // ZXY rotation order (standard for device orientation)
-            phoneData.qw = cA * cB * cG - sA * sB * sG;
-            phoneData.qx = cA * sB * cG - sA * cB * sG;
-            phoneData.qy = cA * sB * sG + sA * cB * cG;
-            phoneData.qz = cA * cB * sG + sA * sB * cG;
-            
-            // Normalize
-            const norm = Math.sqrt(phoneData.qw**2 + phoneData.qx**2 + phoneData.qy**2 + phoneData.qz**2);
-            if (norm > 0) {
-                phoneData.qw /= norm;
-                phoneData.qx /= norm;
-                phoneData.qy /= norm;
-                phoneData.qz /= norm;
-            }
-            
-            // Update UI
-            document.getElementById('phoneRoll').textContent = phoneData.roll.toFixed(1) + '°';
-            document.getElementById('phonePitch').textContent = phoneData.pitch.toFixed(1) + '°';
-            document.getElementById('phoneYaw').textContent = phoneData.yaw.toFixed(1) + '°';
-            
-            document.getElementById('phoneQuatW').textContent = phoneData.qw.toFixed(4);
-            document.getElementById('phoneQuatX').textContent = phoneData.qx.toFixed(4);
-            document.getElementById('phoneQuatY').textContent = phoneData.qy.toFixed(4);
-            document.getElementById('phoneQuatZ').textContent = phoneData.qz.toFixed(4);
-            document.getElementById('phoneQuatNorm').textContent = norm.toFixed(4);
-            
-            updateDifference();
-            
-            if (isRecording) {
-                recordSample();
-            }
+            // Accumulate orientation data for averaging
+            phoneOrientationBuffer.alpha += (event.alpha || 0);
+            phoneOrientationBuffer.beta += (event.beta || 0);
+            phoneOrientationBuffer.gamma += (event.gamma || 0);
+            phoneOrientationBuffer.count++;
         }
         
-        // Throttle phone gyro sampling rate to match ESP32 (~20Hz)
-        let lastPhoneGyroUpdate = 0;
-        const PHONE_GYRO_INTERVAL_MS = 50; // 50ms = 20Hz sampling rate
+        // Throttle phone sensor sampling rate to match ESP32 (10Hz)
+        let lastPhoneSensorUpdate = 0;
+        const PHONE_SENSOR_INTERVAL_MS = 100; // 100ms = 10Hz sampling rate
+        
+        // Buffered sensor data for resampling
+        let phoneOrientationBuffer = { alpha: 0, beta: 0, gamma: 0, count: 0 };
+        let phoneAccelBuffer = { x: 0, y: 0, z: 0, count: 0 };
+        let phoneGyroBuffer = { alpha: 0, beta: 0, gamma: 0, count: 0 };
         
         function handlePhoneMotion(event) {
             // DeviceMotionEvent provides:
@@ -829,33 +794,101 @@
             // - acceleration: acceleration without gravity (m/s²) - may be null on some devices
             // - rotationRate: gyroscope data (deg/s)
             
-            // Use accelerationIncludingGravity (more widely supported)
-            // Keep in m/s² to match ESP32 output (no conversion needed)
+            // Accumulate accelerometer data for averaging
             const accel = event.accelerationIncludingGravity;
             if (accel) {
-                phoneData.accelX = accel.x || 0;
-                phoneData.accelY = accel.y || 0;
-                phoneData.accelZ = accel.z || 0;
+                phoneAccelBuffer.x += (accel.x || 0);
+                phoneAccelBuffer.y += (accel.y || 0);
+                phoneAccelBuffer.z += (accel.z || 0);
+                phoneAccelBuffer.count++;
+            }
+            
+            // Accumulate gyroscope data for averaging
+            const gyro = event.rotationRate;
+            if (gyro) {
+                phoneGyroBuffer.alpha += (gyro.alpha || 0);
+                phoneGyroBuffer.beta += (gyro.beta || 0);
+                phoneGyroBuffer.gamma += (gyro.gamma || 0);
+                phoneGyroBuffer.count++;
+            }
+            
+            // Throttle all sensor updates to 10Hz to match ESP32
+            const currentTime = Date.now();
+            if (currentTime - lastPhoneSensorUpdate < PHONE_SENSOR_INTERVAL_MS) {
+                return; // Skip this update to reduce sampling rate
+            }
+            lastPhoneSensorUpdate = currentTime;
+            
+            // Process averaged orientation data
+            if (phoneOrientationBuffer.count > 0) {
+                const avgAlpha = phoneOrientationBuffer.alpha / phoneOrientationBuffer.count;
+                const avgBeta = phoneOrientationBuffer.beta / phoneOrientationBuffer.count;
+                const avgGamma = phoneOrientationBuffer.gamma / phoneOrientationBuffer.count;
+                
+                // Map to our convention (matching ESP32 output)
+                phoneData.yaw = avgAlpha;      // Compass heading
+                phoneData.pitch = avgBeta;     // Front/back tilt
+                phoneData.roll = avgGamma;     // Left/right tilt
+                
+                // Compute quaternion from Euler angles (ZXY convention for device orientation)
+                const alpha = avgAlpha * (Math.PI / 180); // yaw
+                const beta  = avgBeta * (Math.PI / 180);  // pitch
+                const gamma = avgGamma * (Math.PI / 180); // roll
+                
+                const cA = Math.cos(alpha / 2), sA = Math.sin(alpha / 2);
+                const cB = Math.cos(beta  / 2), sB = Math.sin(beta  / 2);
+                const cG = Math.cos(gamma / 2), sG = Math.sin(gamma / 2);
+                
+                // ZXY rotation order (standard for device orientation)
+                phoneData.qw = cA * cB * cG - sA * sB * sG;
+                phoneData.qx = cA * sB * cG - sA * cB * sG;
+                phoneData.qy = cA * sB * sG + sA * cB * cG;
+                phoneData.qz = cA * cB * sG + sA * sB * cG;
+                
+                // Normalize
+                const norm = Math.sqrt(phoneData.qw**2 + phoneData.qx**2 + phoneData.qy**2 + phoneData.qz**2);
+                if (norm > 0) {
+                    phoneData.qw /= norm;
+                    phoneData.qx /= norm;
+                    phoneData.qy /= norm;
+                    phoneData.qz /= norm;
+                }
+                
+                // Update UI
+                document.getElementById('phoneRoll').textContent = phoneData.roll.toFixed(1) + '°';
+                document.getElementById('phonePitch').textContent = phoneData.pitch.toFixed(1) + '°';
+                document.getElementById('phoneYaw').textContent = phoneData.yaw.toFixed(1) + '°';
+                
+                document.getElementById('phoneQuatW').textContent = phoneData.qw.toFixed(4);
+                document.getElementById('phoneQuatX').textContent = phoneData.qx.toFixed(4);
+                document.getElementById('phoneQuatY').textContent = phoneData.qy.toFixed(4);
+                document.getElementById('phoneQuatZ').textContent = phoneData.qz.toFixed(4);
+                document.getElementById('phoneQuatNorm').textContent = norm.toFixed(4);
+                
+                // Reset orientation buffer
+                phoneOrientationBuffer = { alpha: 0, beta: 0, gamma: 0, count: 0 };
+            }
+            
+            // Process averaged accelerometer data
+            if (phoneAccelBuffer.count > 0) {
+                phoneData.accelX = phoneAccelBuffer.x / phoneAccelBuffer.count;
+                phoneData.accelY = phoneAccelBuffer.y / phoneAccelBuffer.count;
+                phoneData.accelZ = phoneAccelBuffer.z / phoneAccelBuffer.count;
                 
                 document.getElementById('phoneAccelX').textContent = phoneData.accelX.toFixed(2) + ' m/s²';
                 document.getElementById('phoneAccelY').textContent = phoneData.accelY.toFixed(2) + ' m/s²';
                 document.getElementById('phoneAccelZ').textContent = phoneData.accelZ.toFixed(2) + ' m/s²';
+                
+                // Reset accel buffer
+                phoneAccelBuffer = { x: 0, y: 0, z: 0, count: 0 };
             }
             
-            // Throttle gyroscope updates to 20Hz to match ESP32
-            const currentTime = Date.now();
-            if (currentTime - lastPhoneGyroUpdate < PHONE_GYRO_INTERVAL_MS) {
-                return; // Skip this update to reduce sampling rate
-            }
-            lastPhoneGyroUpdate = currentTime;
-            
-            // Gyroscope data (rotation rate)
-            const gyro = event.rotationRate;
-            if (gyro) {
+            // Process averaged gyroscope data
+            if (phoneGyroBuffer.count > 0) {
                 // Phone provides rotation rate - browsers typically provide deg/s
-                const gyroXDeg = gyro.beta || 0;   // Rotation around X axis (deg/s)
-                const gyroYDeg = gyro.gamma || 0;  // Rotation around Y axis (deg/s)
-                const gyroZDeg = gyro.alpha || 0;  // Rotation around Z axis (deg/s)
+                const gyroXDeg = phoneGyroBuffer.beta / phoneGyroBuffer.count;   // Rotation around X axis (deg/s)
+                const gyroYDeg = phoneGyroBuffer.gamma / phoneGyroBuffer.count;  // Rotation around Y axis (deg/s)
+                const gyroZDeg = phoneGyroBuffer.alpha / phoneGyroBuffer.count;  // Rotation around Z axis (deg/s)
                 
                 // Convert to rad/s (PRIMARY STORAGE FORMAT FOR PHONE)
                 phoneData.gyroX = gyroXDeg * (Math.PI / 180);
@@ -872,28 +905,35 @@
                 document.getElementById('phoneGyroY').textContent = `${phoneData.gyroY.toFixed(3)} rad/s`;
                 document.getElementById('phoneGyroZ').textContent = `${phoneData.gyroZ.toFixed(3)} rad/s`;
                 
-                // Update ESP32 gyro display with interpolated values at phone's timing
-                if (esp32Connected && esp32GyroHistory.timestamps.length > 0) {
-                    const interpolatedGyro = getInterpolatedESP32Gyro(currentTime);
-                    
-                    // Store ESP32 gyro in deg/s (PRIMARY FORMAT FOR ESP32)
-                    esp32Data.gyroXDeg = interpolatedGyro.x;
-                    esp32Data.gyroYDeg = interpolatedGyro.y;
-                    esp32Data.gyroZDeg = interpolatedGyro.z;
-                    
-                    // Also convert to rad/s for calculations
-                    esp32Data.gyroX = interpolatedGyro.x * (Math.PI / 180);
-                    esp32Data.gyroY = interpolatedGyro.y * (Math.PI / 180);
-                    esp32Data.gyroZ = interpolatedGyro.z * (Math.PI / 180);
-                    
-                    // Display in deg/s (ESP32 FORMAT)
-                    document.getElementById('esp32GyroX').textContent = `${esp32Data.gyroXDeg.toFixed(1)}°/s (${esp32GyroRate.toFixed(1)}Hz)`;
-                    document.getElementById('esp32GyroY').textContent = `${esp32Data.gyroYDeg.toFixed(1)}°/s`;
-                    document.getElementById('esp32GyroZ').textContent = `${esp32Data.gyroZDeg.toFixed(1)}°/s`;
-                }
+                // Reset gyro buffer
+                phoneGyroBuffer = { alpha: 0, beta: 0, gamma: 0, count: 0 };
+            }
+            
+            // Update ESP32 gyro display with interpolated values at phone's timing
+            if (esp32Connected && esp32GyroHistory.timestamps.length > 0) {
+                const interpolatedGyro = getInterpolatedESP32Gyro(currentTime);
+                
+                // Store ESP32 gyro in deg/s (PRIMARY FORMAT FOR ESP32)
+                esp32Data.gyroXDeg = interpolatedGyro.x;
+                esp32Data.gyroYDeg = interpolatedGyro.y;
+                esp32Data.gyroZDeg = interpolatedGyro.z;
+                
+                // Also convert to rad/s for calculations
+                esp32Data.gyroX = interpolatedGyro.x * (Math.PI / 180);
+                esp32Data.gyroY = interpolatedGyro.y * (Math.PI / 180);
+                esp32Data.gyroZ = interpolatedGyro.z * (Math.PI / 180);
+                
+                // Display in deg/s (ESP32 FORMAT)
+                document.getElementById('esp32GyroX').textContent = `${esp32Data.gyroXDeg.toFixed(1)}°/s (${esp32GyroRate.toFixed(1)}Hz)`;
+                document.getElementById('esp32GyroY').textContent = `${esp32Data.gyroYDeg.toFixed(1)}°/s`;
+                document.getElementById('esp32GyroZ').textContent = `${esp32Data.gyroZDeg.toFixed(1)}°/s`;
             }
             
             updateDifference();
+            
+            if (isRecording) {
+                recordSample();
+            }
         }
         
         // ============== ESP32 BLUETOOTH ==============
